@@ -271,6 +271,31 @@ public protocol TerminalImage {
     var col: Int { get set }
 }
 
+public enum TerminalMouseProtocol: Equatable {
+    case x10
+    case utf8
+    case sgr
+    case urxvt
+    case sgrPixel
+}
+
+public enum MouseWheelDirection: Equatable {
+    case up
+    case down
+}
+
+public struct TerminalModeSnapshot: Equatable {
+    public let isAlternateBuffer: Bool
+    public let isMouseReportingEnabled: Bool
+    public let mouseMode: Terminal.MouseMode
+    public let mouseProtocol: TerminalMouseProtocol
+    public let isBracketedPasteEnabled: Bool
+    public let isApplicationCursorEnabled: Bool
+    public let isApplicationKeypadEnabled: Bool
+    public let isOriginModeEnabled: Bool
+    public let isWraparoundEnabled: Bool
+}
+
 /**
  * The `Terminal` class provides the terminal emulation engine, and can be used to feed data to the
  * terminal emulator.   Typically users will intereact with a higher-level implementation that provides a
@@ -465,7 +490,7 @@ open class Terminal {
         case vt400
         case vt500
     }
-    
+
     // The mouse coordinates can be encoded in a number of ways, and obey to historical
     // upgrades to the protocol, but also attempts at fixing limitations of the different
     // encodings.
@@ -491,6 +516,21 @@ open class Terminal {
     
     // The protocol encoding for the terminal
     private var mouseProtocol: MouseProtocolEncoding = .x10
+
+    public var currentMouseProtocol: TerminalMouseProtocol {
+        switch mouseProtocol {
+        case .x10:
+            return .x10
+        case .utf8:
+            return .utf8
+        case .sgr:
+            return .sgr
+        case .urxvt:
+            return .urxvt
+        case .sgrPixel:
+            return .sgrPixel
+        }
+    }
 
     // This is used to track if we are setting the colors, to prevent a
     // recursive invocation (nativeForegroundColor sets the terminal
@@ -568,7 +608,7 @@ open class Terminal {
     /// Represents the mouse operation mode that the terminal is currently using and higher level
     /// implementations should use the functions in this enumeration to determine what events to
     /// send
-    public enum MouseMode {
+    public enum MouseMode: Equatable {
         /// No mouse events are reported
         case off
         
@@ -622,6 +662,20 @@ open class Terminal {
         didSet {
             tdel?.mouseModeChanged (source: self)
         }
+    }
+
+    public var modeSnapshot: TerminalModeSnapshot {
+        TerminalModeSnapshot(
+            isAlternateBuffer: isCurrentBufferAlternate,
+            isMouseReportingEnabled: mouseMode != .off,
+            mouseMode: mouseMode,
+            mouseProtocol: currentMouseProtocol,
+            isBracketedPasteEnabled: bracketedPasteMode,
+            isApplicationCursorEnabled: applicationCursor,
+            isApplicationKeypadEnabled: applicationKeypad,
+            isOriginModeEnabled: originMode,
+            isWraparoundEnabled: wraparound
+        )
     }
 
     // The next four variables determine whether setting/querying should be done using utf8 or latin1
@@ -853,6 +907,7 @@ open class Terminal {
         curAttr = CharData.defaultAttr
         
         mouseMode = .off
+        mouseProtocol = .x10
         
         buffer.scrollTop = 0
         buffer.scrollBottom = rows-1
@@ -5632,6 +5687,55 @@ open class Terminal {
     public func sendEvent (buttonFlags: Int, x: Int, y: Int) {
       sendEvent(buttonFlags: buttonFlags, x: x, y: y, pixelX: x, pixelY: y)
     }
+
+    private static let maximumX10MouseCoordinate = 222
+
+    private func clampedCellX(_ x: Int) -> Int {
+        min(max(0, x), cols - 1)
+    }
+
+    private func clampedCellY(_ y: Int) -> Int {
+        min(max(0, y), rows - 1)
+    }
+
+    public func sendMouseWheel(
+        _ direction: MouseWheelDirection,
+        x: Int,
+        y: Int,
+        shift: Bool = false,
+        meta: Bool = false,
+        control: Bool = false
+    ) {
+        sendMouseWheel(
+            direction,
+            x: x,
+            y: y,
+            pixelX: x,
+            pixelY: y,
+            shift: shift,
+            meta: meta,
+            control: control)
+    }
+
+    public func sendMouseWheel(
+        _ direction: MouseWheelDirection,
+        x: Int,
+        y: Int,
+        pixelX: Int,
+        pixelY: Int,
+        shift: Bool = false,
+        meta: Bool = false,
+        control: Bool = false
+    ) {
+        let button = direction == .up ? 4 : 5
+        let flags = encodeButton(button: button, release: false, shift: shift, meta: meta, control: control)
+        sendEvent(
+            buttonFlags: flags,
+            x: clampedCellX(x),
+            y: clampedCellY(y),
+            pixelX: max(0, pixelX),
+            pixelY: max(0, pixelY))
+    }
     
     /**
      * Sends a mouse event for a specific button at the specific location
@@ -5644,7 +5748,10 @@ open class Terminal {
         //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (UInt8(255), UInt8(32 + x+1)), min (UInt8(255), UInt8(32+y+1))])
+            let encodedButtonFlags = UInt8(clamping: buttonFlags + 32)
+            let encodedX = UInt8(32 + min(max(0, x), Terminal.maximumX10MouseCoordinate) + 1)
+            let encodedY = UInt8(32 + min(max(0, y), Terminal.maximumX10MouseCoordinate) + 1)
+            sendResponse(cc.CSI, "M", [encodedButtonFlags, encodedX, encodedY])
         case .sgr:
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
@@ -5652,7 +5759,6 @@ open class Terminal {
         case .sgrPixel:
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            print ("\(pixelX);\(pixelY)")
             sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
             
         case .urxvt:
