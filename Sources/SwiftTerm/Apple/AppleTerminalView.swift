@@ -76,6 +76,12 @@ public struct TerminalViewportSnapshot: Equatable {
     }
 }
 
+public enum TerminalFeedTransactionKind: Equatable {
+    case normal
+    case historySeedPreservingViewport
+    case fullReplace
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -126,6 +132,26 @@ extension TerminalView {
     public func setTopVisibleRow(_ row: Int, notifyAccessibility: Bool = true) {
         let clamped = max(0, min(row, maxTopVisibleRow))
         scrollTo(row: clamped, notifyAccessibility: notifyAccessibility)
+    }
+
+    public func performFeedTransaction(_ kind: TerminalFeedTransactionKind, _ body: () -> Void) {
+        let previousPolicy = viewportFollowPolicy
+        let previousTopRow = topVisibleRow
+        defer {
+            if kind == .historySeedPreservingViewport {
+                setTopVisibleRow(previousTopRow, notifyAccessibility: false)
+            }
+            viewportFollowPolicy = previousPolicy
+        }
+
+        switch kind {
+        case .normal, .fullReplace:
+            viewportFollowPolicy = .followCursor
+        case .historySeedPreservingViewport:
+            viewportFollowPolicy = .preserveUserPosition
+        }
+
+        body()
     }
     
     func resetCaches ()
