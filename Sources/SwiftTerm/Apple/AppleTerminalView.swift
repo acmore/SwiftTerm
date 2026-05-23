@@ -59,6 +59,23 @@ public enum LinkHighlightMode {
     case alwaysWithModifier
 }
 
+public enum TerminalViewportFollowPolicy: Equatable {
+    case followCursor
+    case preserveUserPosition
+}
+
+public struct TerminalViewportSnapshot: Equatable {
+    public let topVisibleRow: Int
+    public let maxTopVisibleRow: Int
+    public let visibleRows: Int
+    public let totalRows: Int
+    public let isAlternateBuffer: Bool
+
+    public var isAtBottom: Bool {
+        topVisibleRow >= maxTopVisibleRow
+    }
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -85,6 +102,31 @@ struct ViewLineInfo {
 
 extension TerminalView {
     typealias CellDimension = CGSize
+
+    public var topVisibleRow: Int {
+        terminal.displayBuffer.yDisp
+    }
+
+    public var maxTopVisibleRow: Int {
+        let displayBuffer = terminal.displayBuffer
+        return max(0, displayBuffer.lines.count - displayBuffer.rows)
+    }
+
+    public var viewportSnapshot: TerminalViewportSnapshot {
+        let displayBuffer = terminal.displayBuffer
+        return TerminalViewportSnapshot(
+            topVisibleRow: displayBuffer.yDisp,
+            maxTopVisibleRow: maxTopVisibleRow,
+            visibleRows: displayBuffer.rows,
+            totalRows: displayBuffer.lines.count,
+            isAlternateBuffer: terminal.isDisplayBufferAlternate
+        )
+    }
+
+    public func setTopVisibleRow(_ row: Int, notifyAccessibility: Bool = true) {
+        let clamped = max(0, min(row, maxTopVisibleRow))
+        scrollTo(row: clamped, notifyAccessibility: notifyAccessibility)
+    }
     
     func resetCaches ()
     {
@@ -1898,6 +1940,11 @@ extension TerminalView {
       
     func feedPrepare()
     {
+        if viewportFollowPolicy == .preserveUserPosition {
+            pendingViewportTopVisibleRow = topVisibleRow
+        } else {
+            pendingViewportTopVisibleRow = nil
+        }
         search.invalidate()
         // Preserve manual selection while output is streaming when mouse reporting is disabled.
         if allowMouseReporting {
@@ -1908,6 +1955,13 @@ extension TerminalView {
     
     func feedFinish ()
     {
+        switch viewportFollowPolicy {
+        case .followCursor:
+            setTopVisibleRow(maxTopVisibleRow)
+        case .preserveUserPosition:
+            setTopVisibleRow(pendingViewportTopVisibleRow ?? topVisibleRow)
+        }
+        pendingViewportTopVisibleRow = nil
         suspendDisplayUpdates ()
         queuePendingDisplay()
     }

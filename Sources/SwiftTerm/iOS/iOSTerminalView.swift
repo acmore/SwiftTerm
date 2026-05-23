@@ -146,6 +146,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
 
+    public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
+    var pendingViewportTopVisibleRow: Int?
+    var isApplyingViewportContentOffset = false
+
     /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hover {
         didSet {
@@ -1365,12 +1369,46 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func updateScroller ()
     {
         let displayBuffer = terminal.displayBuffer
-        contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
-                              height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        contentSize = CGSize(width: CGFloat(displayBuffer.cols) * cellDimension.width,
+                             height: CGFloat(displayBuffer.lines.count) * cellDimension.height)
+
+        let targetRow: Int
+        switch viewportFollowPolicy {
+        case .followCursor:
+            targetRow = maxTopVisibleRow
+        case .preserveUserPosition:
+            targetRow = min(displayBuffer.yDisp, maxTopVisibleRow)
+        }
+
+        let targetOffset = CGPoint(x: 0, y: CGFloat(targetRow) * cellDimension.height)
+        if contentOffset != targetOffset {
+            isApplyingViewportContentOffset = true
+            contentOffset = targetOffset
+            isApplyingViewportContentOffset = false
+        }
         //Xscroller.doubleValue = scrollPosition
         //Xscroller.knobProportion = scrollThumbsize
+    }
+
+    func syncViewportTopVisibleRowFromContentOffset() {
+        guard !isApplyingViewportContentOffset,
+              let terminal,
+              cellDimension.height.isFinite,
+              cellDimension.height > 0 else {
+            return
+        }
+
+        let displayBuffer = terminal.displayBuffer
+        guard displayBuffer.rows > 0 else { return }
+
+        let visibleRow = Int(floor(contentOffset.y / cellDimension.height))
+        let clampedRow = max(0, min(visibleRow, maxTopVisibleRow))
+        guard clampedRow != displayBuffer.yDisp else { return }
+
+        terminal.setViewYDisp(clampedRow)
+        terminal.refresh(startRow: 0, endRow: terminal.rows)
+        updateDisplay(notifyAccessibility: true)
+        terminalDelegate?.scrolled(source: self, position: scrollPosition)
     }
 
 #if canImport(MetalKit)
@@ -1473,6 +1511,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override var contentOffset: CGPoint {
         didSet {
+            syncViewportTopVisibleRowFromContentOffset()
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()

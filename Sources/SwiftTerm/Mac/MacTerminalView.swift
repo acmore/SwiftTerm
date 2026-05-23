@@ -94,6 +94,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
      * The delegate that the TerminalView uses to interact with its hosting
      */
     public weak var terminalDelegate: TerminalViewDelegate?
+
+    public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
+    var pendingViewportTopVisibleRow: Int?
     
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
