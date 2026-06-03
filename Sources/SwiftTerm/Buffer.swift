@@ -1002,6 +1002,8 @@ public final class Buffer {
             savedX = min (savedX, newCols - 1)
 
             scrollTop = 0
+        } else if newMaxLength < lines.maxLength {
+            lines.maxLength = newMaxLength
         }
         scrollBottom = newRows - 1
         if tabStops.count > newCols {
