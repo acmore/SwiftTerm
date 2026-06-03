@@ -343,6 +343,32 @@ final class BufferTests: TerminalDelegate {
         terminal.feed(text: "\u{1b}M")        // Reverse index
     }
 
+    @Test func testEmptyAltBufferResizeShrinksNoScrollbackCapacity() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 65, rows: 43))
+
+        terminal.feed(text: "\u{1b}[?1049h")
+        #expect(terminal.buffer === terminal.altBuffer)
+
+        terminal.feed(text: "\u{1b}[?1049l")
+        #expect(terminal.buffer === terminal.normalBuffer)
+        #expect(terminal.altBuffer.lines.count == 0)
+
+        terminal.resize(cols: 65, rows: 23)
+        #expect(terminal.altBuffer.rows == 23)
+
+        terminal.feed(text: "\u{1b}[?1049h")
+        #expect(terminal.buffer === terminal.altBuffer)
+        #expect(terminal.altBuffer.lines.count == 23)
+
+        for i in 0..<30 {
+            terminal.feed(text: "Alt line \(i)\r\n")
+        }
+
+        #expect(terminal.altBuffer.lines.count == 23)
+        #expect(terminal.altBuffer.yBase == 0)
+        #expect(terminal.altBuffer.yDisp == 0)
+    }
+
     /// Test scroll() with corrupted yBase triggers defensive guard
     @Test func testScrollWithCorruptedYBase() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
