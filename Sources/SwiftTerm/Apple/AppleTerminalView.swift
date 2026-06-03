@@ -82,6 +82,55 @@ public enum TerminalFeedTransactionKind: Equatable {
     case fullReplace
 }
 
+public enum TerminalScrollAction: Equatable {
+    case localViewport(lines: Int, topVisibleRow: Int)
+    case mouseWheel(lines: Int)
+    case alternateScrollKeys(lines: Int)
+    case ignored
+}
+
+public struct TerminalScrollDeltaAccumulator: Equatable {
+    private var pendingLines: CGFloat = 0
+
+    public init() {}
+
+    public mutating func reset() {
+        pendingLines = 0
+    }
+
+    public mutating func consume(
+        deltaY: CGFloat,
+        pointsPerLine: CGFloat,
+        maximumLinesPerEvent: Int
+    ) -> Int {
+        guard deltaY.isFinite,
+              deltaY != 0,
+              pointsPerLine.isFinite,
+              pointsPerLine > 0,
+              maximumLinesPerEvent > 0 else {
+            return 0
+        }
+
+        let incomingLines = deltaY / pointsPerLine
+        if pendingLines != 0,
+           incomingLines != 0,
+           (pendingLines > 0) != (incomingLines > 0) {
+            pendingLines = 0
+        }
+
+        pendingLines += incomingLines
+        let wholeLines = Int(pendingLines.rounded(.towardZero))
+        guard wholeLines != 0 else {
+            return 0
+        }
+
+        let maxLines = max(1, maximumLinesPerEvent)
+        let emittedLines = min(max(wholeLines, -maxLines), maxLines)
+        pendingLines -= CGFloat(wholeLines)
+        return emittedLines
+    }
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -152,6 +201,80 @@ extension TerminalView {
         }
 
         body()
+    }
+
+    public func handleScroll(
+        lines: Int,
+        x: Int,
+        y: Int,
+        pixelX: Int? = nil,
+        pixelY: Int? = nil
+    ) -> TerminalScrollAction {
+        guard lines != 0 else {
+            return .ignored
+        }
+
+        let mode = terminal.modeSnapshot
+        let count = abs(lines)
+
+        if mode.isMouseReportingEnabled {
+            let direction: MouseWheelDirection = lines > 0 ? .up : .down
+            for _ in 0..<count {
+                terminal.sendMouseWheel(
+                    direction,
+                    x: x,
+                    y: y,
+                    pixelX: pixelX ?? x,
+                    pixelY: pixelY ?? y)
+            }
+            return .mouseWheel(lines: lines)
+        }
+
+        if mode.isAlternateBuffer {
+            guard mode.isAlternateScrollModeEnabled else {
+                return .ignored
+            }
+
+            for _ in 0..<count {
+                if lines > 0 {
+                    sendKeyUp()
+                } else {
+                    sendKeyDown()
+                }
+            }
+            return .alternateScrollKeys(lines: lines)
+        }
+
+        guard canScroll else {
+            return .ignored
+        }
+
+        if lines > 0 {
+            scrollUp(lines: count)
+        } else {
+            scrollDown(lines: count)
+        }
+        return .localViewport(lines: lines, topVisibleRow: topVisibleRow)
+    }
+
+    public func handleScrollDelta(
+        deltaY: CGFloat,
+        x: Int,
+        y: Int,
+        pixelX: Int? = nil,
+        pixelY: Int? = nil,
+        pointsPerLine: CGFloat? = nil
+    ) -> TerminalScrollAction {
+        let resolvedPointsPerLine = max(1, pointsPerLine ?? cellDimension.height)
+        let lines = scrollDeltaAccumulator.consume(
+            deltaY: deltaY,
+            pointsPerLine: resolvedPointsPerLine,
+            maximumLinesPerEvent: maximumScrollLinesPerEvent)
+        guard lines != 0 else {
+            return .ignored
+        }
+
+        return handleScroll(lines: lines, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
     }
     
     func resetCaches ()
@@ -258,7 +381,7 @@ extension TerminalView {
         }
         return false
     }
-    
+
     // Computes the font dimensions once font.normal has been set
     func computeFontDimensions () -> CellDimension
     {

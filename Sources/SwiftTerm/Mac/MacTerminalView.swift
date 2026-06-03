@@ -97,6 +97,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
     var pendingViewportTopVisibleRow: Int?
+    public var maximumScrollLinesPerEvent: Int = 12
+    var scrollDeltaAccumulator = TerminalScrollDeltaAccumulator()
     
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
@@ -2176,11 +2178,32 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         if event.deltaY == 0 {
             return
         }
-        let velocity = calcScrollingVelocity(delta: Int (abs (event.deltaY)))
-        if event.deltaY > 0 {
-            scrollUp (lines: velocity)
+
+        let hit = calculateMouseHit(with: event)
+        let pointsPerLine = max(1, cellDimension.height)
+        let deltaY = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.deltaY * pointsPerLine
+
+        if allowMouseReporting {
+            _ = handleScrollDelta(
+                deltaY: deltaY,
+                x: hit.grid.col,
+                y: hit.grid.row,
+                pixelX: hit.pixels.col,
+                pixelY: hit.pixels.row,
+                pointsPerLine: pointsPerLine)
+            return
+        }
+
+        let lines = scrollDeltaAccumulator.consume(
+            deltaY: deltaY,
+            pointsPerLine: pointsPerLine,
+            maximumLinesPerEvent: maximumScrollLinesPerEvent)
+        if lines > 0 {
+            scrollUp(lines: lines)
+        } else if lines < 0 {
+            scrollDown(lines: -lines)
         } else {
-            scrollDown(lines: velocity)
+            return
         }
     }
     

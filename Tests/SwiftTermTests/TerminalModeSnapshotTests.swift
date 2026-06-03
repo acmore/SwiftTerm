@@ -51,4 +51,18 @@ final class TerminalModeSnapshotTests {
         #expect(terminal.currentMouseProtocol == .x10)
         #expect(terminal.modeSnapshot.mouseProtocol == .x10)
     }
+
+    @Test func testModeSnapshotTracksAlternateScrollMode() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
+
+        #expect(terminal.modeSnapshot.isAlternateScrollModeEnabled)
+
+        terminal.feed(text: "\(esc)[?1007l")
+
+        #expect(!terminal.modeSnapshot.isAlternateScrollModeEnabled)
+
+        terminal.feed(text: "\(esc)[?1007h")
+
+        #expect(terminal.modeSnapshot.isAlternateScrollModeEnabled)
+    }
 }

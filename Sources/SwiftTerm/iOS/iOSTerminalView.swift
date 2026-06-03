@@ -149,6 +149,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
     var pendingViewportTopVisibleRow: Int?
     var isApplyingViewportContentOffset = false
+    public var maximumScrollLinesPerEvent: Int = 12
+    var scrollDeltaAccumulator = TerminalScrollDeltaAccumulator()
+    private var lastNativeScrollTranslationY: CGFloat = 0
 
     /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hover {
@@ -974,6 +977,47 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             break
         }
     }
+
+    private var shouldRouteNativeScrollToTerminal: Bool {
+        guard didFinishSetup, let terminal else {
+            return false
+        }
+        let mode = terminal.modeSnapshot
+        return allowMouseReporting && (mode.isMouseReportingEnabled || mode.isAlternateBuffer)
+    }
+
+    @objc func nativeScrollPanHandler(_ gestureRecognizer: UIPanGestureRecognizer) {
+        let translationY = gestureRecognizer.translation(in: self).y
+        defer {
+            lastNativeScrollTranslationY = translationY
+        }
+
+        switch gestureRecognizer.state {
+        case .began:
+            scrollDeltaAccumulator.reset()
+        case .changed:
+            guard shouldRouteNativeScrollToTerminal,
+                  !selection.active else {
+                scrollDeltaAccumulator.reset()
+                return
+            }
+
+            let deltaY = translationY - lastNativeScrollTranslationY
+            let hit = calculateTapHit(gesture: gestureRecognizer)
+            if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
+                _ = handleScrollDelta(
+                    deltaY: deltaY,
+                    x: grid.col,
+                    y: grid.row,
+                    pixelX: hit.pixels.col,
+                    pixelY: hit.pixels.row)
+            }
+        case .ended, .cancelled, .failed:
+            scrollDeltaAccumulator.reset()
+        default:
+            break
+        }
+    }
     
     var panMouseGesture: UIPanGestureRecognizer?
     func enableMousePanGesture () {
@@ -1027,6 +1071,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let tripleTap = UITapGestureRecognizer (target: self, action: #selector(tripleTap(_:)))
         tripleTap.numberOfTapsRequired = 3
         addGestureRecognizer(tripleTap)
+
+        panGestureRecognizer.addTarget(self, action: #selector(nativeScrollPanHandler(_:)))
 
         singleTap.require(toFail: doubleTap)
         doubleTap.require(toFail: tripleTap)
@@ -1511,6 +1557,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override var contentOffset: CGPoint {
         didSet {
+            if shouldRouteNativeScrollToTerminal && !isApplyingViewportContentOffset {
+                isApplyingViewportContentOffset = true
+                contentOffset = oldValue
+                isApplyingViewportContentOffset = false
+                return
+            }
+
             syncViewportTopVisibleRowFromContentOffset()
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {

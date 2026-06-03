@@ -289,6 +289,7 @@ public struct TerminalModeSnapshot: Equatable {
     public let isMouseReportingEnabled: Bool
     public let mouseMode: Terminal.MouseMode
     public let mouseProtocol: TerminalMouseProtocol
+    public let isAlternateScrollModeEnabled: Bool
     public let isBracketedPasteEnabled: Bool
     public let isApplicationCursorEnabled: Bool
     public let isApplicationKeypadEnabled: Bool
@@ -373,6 +374,10 @@ open class Terminal {
     
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
+
+    /// Controls xterm alternate-scroll mode (DECSET 1007). When enabled, front-ends
+    /// can translate wheel events in the alternate buffer into cursor-key input.
+    public private(set) var alternateScrollMode: Bool = true
 
     private struct KeyboardModeState {
         var flags: KittyKeyboardFlags = []
@@ -670,6 +675,7 @@ open class Terminal {
             isMouseReportingEnabled: mouseMode != .off,
             mouseMode: mouseMode,
             mouseProtocol: currentMouseProtocol,
+            isAlternateScrollModeEnabled: alternateScrollMode,
             isBracketedPasteEnabled: bracketedPasteMode,
             isApplicationCursorEnabled: applicationCursor,
             isApplicationKeypadEnabled: applicationKeypad,
@@ -889,6 +895,7 @@ open class Terminal {
         // modes
         applicationKeypad = false
         applicationCursor = false
+        alternateScrollMode = true
         originMode = false
         
         setMarginMode(false)
@@ -3328,6 +3335,8 @@ open class Terminal {
                 res = mouseProtocol == .utf8 ? modeSet : modeReset
             case 1006:
                 res = mouseProtocol == .sgr ? modeSet : modeReset
+            case 1007:
+                res = alternateScrollMode ? modeSet : modeReset
             case 1015:
                 res = mouseProtocol == .urxvt ? modeSet : modeReset
             case 1016:
@@ -4149,6 +4158,8 @@ open class Terminal {
             case 1006: // sgr ext mode mouse
                 mouseProtocol = .x10
                 mouseMode = .off
+            case 1007: // alternate scroll mode
+                alternateScrollMode = false
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .x10
                 mouseMode = .off
@@ -4385,6 +4396,8 @@ open class Terminal {
                 break;
             case 1006: // sgr ext mode mouse
                 mouseProtocol = .sgr
+            case 1007: // alternate scroll mode
+                alternateScrollMode = true
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .urxvt
             case 1016: // sgrPixel mode
