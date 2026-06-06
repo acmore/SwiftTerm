@@ -5749,7 +5749,142 @@ open class Terminal {
             pixelX: max(0, pixelX),
             pixelY: max(0, pixelY))
     }
+
+    /**
+     * Returns the wire bytes for a mouse-wheel press in the current
+     * `mouseProtocol`. Pure equivalent of `sendMouseWheel(_:x:y:...)` for
+     * callers that route mouse input through their own transport.
+     */
+    public func mouseWheelBytes(
+        direction: MouseWheelDirection,
+        x: Int,
+        y: Int,
+        shift: Bool = false,
+        meta: Bool = false,
+        control: Bool = false
+    ) -> [UInt8] {
+        mouseWheelBytes(
+            direction: direction,
+            x: x,
+            y: y,
+            pixelX: x,
+            pixelY: y,
+            shift: shift,
+            meta: meta,
+            control: control)
+    }
+
+    public func mouseWheelBytes(
+        direction: MouseWheelDirection,
+        x: Int,
+        y: Int,
+        pixelX: Int,
+        pixelY: Int,
+        shift: Bool = false,
+        meta: Bool = false,
+        control: Bool = false
+    ) -> [UInt8] {
+        let button = direction == .up ? 4 : 5
+        let flags = encodeButton(button: button, release: false, shift: shift, meta: meta, control: control)
+        return eventBytes(
+            buttonFlags: flags,
+            x: clampedCellX(x),
+            y: clampedCellY(y),
+            pixelX: max(0, pixelX),
+            pixelY: max(0, pixelY))
+    }
+
+    /**
+     * Returns the wire bytes for a primary-button click in the current
+     * `mouseProtocol`. Pure function — does not invoke the terminal
+     * delegate. The return tuple's `release` is `nil` for protocols that
+     * do not emit a release event (`.off`, `.x10`); otherwise it contains
+     * the matching release bytes the caller should send after `press`.
+     *
+     * Returns `nil` when `mouseMode == .off` (no click should be reported).
+     */
+    public func primaryClickBytes(
+        cellX: Int,
+        cellY: Int,
+        pixelX: Int,
+        pixelY: Int,
+        control: Bool
+    ) -> (press: [UInt8], release: [UInt8]?)? {
+        guard mouseMode != .off else { return nil }
+        let x = clampedCellX(cellX)
+        let y = clampedCellY(cellY)
+        let pressFlags = encodeButton(
+            button: 0,
+            release: false,
+            shift: false,
+            meta: false,
+            control: control)
+        let press = eventBytes(
+            buttonFlags: pressFlags,
+            x: x,
+            y: y,
+            pixelX: max(0, pixelX),
+            pixelY: max(0, pixelY))
+        let release: [UInt8]?
+        switch mouseMode {
+        case .off, .x10:
+            release = nil
+        case .vt200, .buttonEventTracking, .anyEvent:
+            let releaseFlags = encodeButton(
+                button: 0,
+                release: true,
+                shift: false,
+                meta: false,
+                control: control)
+            release = eventBytes(
+                buttonFlags: releaseFlags,
+                x: x,
+                y: y,
+                pixelX: max(0, pixelX),
+                pixelY: max(0, pixelY))
+        }
+        return (press, release)
+    }
     
+    /**
+     * Returns the wire bytes that `sendEvent(buttonFlags:x:y:pixelX:pixelY:)`
+     * would emit in the current `mouseProtocol`. Pure function — does not
+     * invoke the terminal delegate. Useful for callers that route mouse
+     * input through their own transport (e.g. an SSH multiplexer wrapper)
+     * instead of the terminal's own response channel.
+     */
+    public func eventBytes (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int) -> [UInt8]
+    {
+        var buffer: [UInt8] = []
+        buffer.append(contentsOf: cc.CSI)
+        switch mouseProtocol {
+        case .x10:
+            let encodedButtonFlags = UInt8(clamping: buttonFlags + 32)
+            let encodedX = UInt8(32 + min(max(0, x), Terminal.maximumX10MouseCoordinate) + 1)
+            let encodedY = UInt8(32 + min(max(0, y), Terminal.maximumX10MouseCoordinate) + 1)
+            buffer.append(UInt8(ascii: "M"))
+            buffer.append(encodedButtonFlags)
+            buffer.append(encodedX)
+            buffer.append(encodedY)
+        case .sgr:
+            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
+            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
+            buffer.append(contentsOf: [UInt8]("<\(bflags);\(x+1);\(y+1)\(m)".utf8))
+        case .sgrPixel:
+            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
+            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
+            buffer.append(contentsOf: [UInt8]("<\(bflags);\(pixelX);\(pixelY)\(m)".utf8))
+        case .urxvt:
+            buffer.append(contentsOf: [UInt8]("\(buttonFlags+32);\(x+1);\(y+1)M".utf8))
+        case .utf8:
+            buffer.append(UInt8(ascii: "M"))
+            encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
+            encodeMouseUtf(data: &buffer, ch: x+33)
+            encodeMouseUtf(data: &buffer, ch: y+33)
+        }
+        return buffer
+    }
+
     /**
      * Sends a mouse event for a specific button at the specific location
      * - Parameter buttonFlags: Button flags encoded in Cb mode.
@@ -5758,31 +5893,8 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
-        //print ("got \(mouseProtocol)")
-        switch mouseProtocol {
-        case .x10:
-            let encodedButtonFlags = UInt8(clamping: buttonFlags + 32)
-            let encodedX = UInt8(32 + min(max(0, x), Terminal.maximumX10MouseCoordinate) + 1)
-            let encodedY = UInt8(32 + min(max(0, y), Terminal.maximumX10MouseCoordinate) + 1)
-            sendResponse(cc.CSI, "M", [encodedButtonFlags, encodedX, encodedY])
-        case .sgr:
-            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
-            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
-        case .sgrPixel:
-            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
-            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
-            
-        case .urxvt:
-            sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
-        case .utf8:
-            var buffer: [UInt8] = [UInt8 (ascii: "M")]
-            encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
-            encodeMouseUtf (data: &buffer, ch: x+33)
-            encodeMouseUtf (data: &buffer, ch: y+33)
-            sendResponse(cc.CSI, buffer)
-        }
+        let bytes = eventBytes(buttonFlags: buttonFlags, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
+        tdel?.send(source: self, data: bytes[...])
     }
     
     /**
