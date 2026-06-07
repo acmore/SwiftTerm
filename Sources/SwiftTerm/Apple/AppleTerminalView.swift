@@ -2104,11 +2104,16 @@ extension TerminalView {
     
     func feedFinish ()
     {
-        switch viewportFollowPolicy {
-        case .followCursor:
-            setTopVisibleRow(maxTopVisibleRow)
-        case .preserveUserPosition:
-            setTopVisibleRow(pendingViewportTopVisibleRow ?? topVisibleRow)
+        if let resolver = viewportFollowResolver,
+           let resolved = resolver(viewportSnapshot) {
+            setTopVisibleRow(resolved)
+        } else {
+            switch viewportFollowPolicy {
+            case .followCursor:
+                setTopVisibleRow(maxTopVisibleRow)
+            case .preserveUserPosition:
+                setTopVisibleRow(pendingViewportTopVisibleRow ?? topVisibleRow)
+            }
         }
         pendingViewportTopVisibleRow = nil
         suspendDisplayUpdates ()

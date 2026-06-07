@@ -147,6 +147,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var linkReporting: LinkReporting = .implicit
 
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
+
+    /**
+     * Optional resolver consulted before `updateScroller()` commits a
+     * target row. Returning a buffer row overrides the built-in
+     * `viewportFollowPolicy` decision for that call; returning `nil`
+     * falls back to the enum.
+     *
+     * Callers may capture the view to read live UIKit state
+     * (`isTracking`, `isDragging`, `isDecelerating`, `terminal.cols`,
+     * etc.). The snapshot stays a thin buffer summary.
+     */
+    public var viewportFollowResolver: ((TerminalViewportSnapshot) -> Int?)? = nil
+
     var pendingViewportTopVisibleRow: Int?
     var isApplyingViewportContentOffset = false
     public var maximumScrollLinesPerEvent: Int = 12
@@ -1419,11 +1432,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                              height: CGFloat(displayBuffer.lines.count) * cellDimension.height)
 
         let targetRow: Int
-        switch viewportFollowPolicy {
-        case .followCursor:
-            targetRow = maxTopVisibleRow
-        case .preserveUserPosition:
-            targetRow = min(displayBuffer.yDisp, maxTopVisibleRow)
+        if let resolver = viewportFollowResolver,
+           let resolved = resolver(viewportSnapshot) {
+            targetRow = min(max(0, resolved), maxTopVisibleRow)
+        } else {
+            switch viewportFollowPolicy {
+            case .followCursor:
+                targetRow = maxTopVisibleRow
+            case .preserveUserPosition:
+                targetRow = min(displayBuffer.yDisp, maxTopVisibleRow)
+            }
         }
 
         let targetOffset = CGPoint(x: 0, y: CGFloat(targetRow) * cellDimension.height)

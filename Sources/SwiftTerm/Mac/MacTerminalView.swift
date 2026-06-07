@@ -96,6 +96,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public weak var terminalDelegate: TerminalViewDelegate?
 
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
+
+    /**
+     * Optional resolver consulted before `updateScroller()` commits a
+     * target row. Returning a buffer row overrides the built-in
+     * `viewportFollowPolicy` decision for that call; returning `nil`
+     * falls back to the enum.
+     *
+     * (Stored for source parity with iOS; the Mac scroll path does
+     * not call this resolver in the current iteration.)
+     */
+    public var viewportFollowResolver: ((TerminalViewportSnapshot) -> Int?)? = nil
+
     var pendingViewportTopVisibleRow: Int?
     public var maximumScrollLinesPerEvent: Int = 12
     var scrollDeltaAccumulator = TerminalScrollDeltaAccumulator()
