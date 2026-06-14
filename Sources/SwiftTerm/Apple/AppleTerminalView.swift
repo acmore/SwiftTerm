@@ -3949,6 +3949,9 @@ extension TerminalView {
         caretView.frame.size.width = cellDimension.width * doublePosition *
             CGFloat(cursor.columnWidth)
         caretView.setText(cursor.renderData)
+#if os(iOS) || os(visionOS)
+        onCaretChanged?()
+#endif
     }
     
     /// Queues a frame without waiting for the next display-link callback.

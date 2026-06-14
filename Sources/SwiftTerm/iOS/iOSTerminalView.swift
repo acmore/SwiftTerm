@@ -332,6 +332,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var cellDimension: CellDimension
     var caretView: CaretView?
     var _lineSpacing: CGFloat = 1.0
+
+    /// Invoked at the end of `updateCursorPosition()` once the caret frame has been
+    /// set, so a host can keep an overlay (e.g. an IME composition preview) glued to
+    /// the live cursor as remote output repaints and moves it.
+    public var onCaretChanged: (() -> Void)?
+
     var terminal: Terminal!
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
