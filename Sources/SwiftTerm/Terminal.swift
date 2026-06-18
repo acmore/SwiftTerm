@@ -807,6 +807,32 @@ open class Terminal {
         return buffer.lines [row-buffer.linesTop]
     }
 
+    /// The valid index range for `getScrollInvariantLine(row:)`.
+    ///
+    /// Calling `getScrollInvariantLine(row:)` with any index inside this
+    /// range returns a non-nil `BufferLine`; indices outside return nil.
+    /// The lower bound increases as scrollback is evicted; the upper
+    /// bound grows as new lines are produced. Use this instead of
+    /// probing the API with a binary search.
+    public var scrollInvariantLineRange: Range<Int> {
+        let start = buffer.linesTop
+        return start ..< (start + buffer.lines.count)
+    }
+
+    /// The current cursor position clamped to valid grid indices.
+    ///
+    /// `column` is clamped to `0 ..< cols`. The buffer's raw cursor
+    /// column may equal `cols` while a wrap is pending — that value is
+    /// not a valid index into visible cells, so this property folds it
+    /// back to `cols - 1`. `row` is clamped to `0 ..< rows` for
+    /// defense against transient out-of-range state during alt buffer
+    /// switches.
+    public var cursorPosition: (row: Int, column: Int) {
+        let safeColumn = max(0, min(buffer.x, cols - 1))
+        let safeRow = max(0, min(buffer.y, rows - 1))
+        return (row: safeRow, column: safeColumn)
+    }
+
     /// Returns the character at the specified column and row, these are zero-based
     /// - Parameter col: column to retrieve, starts at 0
     /// - Parameter row: row to retrieve, starts at 0
