@@ -180,6 +180,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var activeCommandKeys: Set<UIKeyboardHIDUsage> = []
     private var pointerInteraction: UIPointerInteraction?
     private var hoverGesture: UIHoverGestureRecognizer?
+    // Holds a UIEditMenuInteraction (iOS 16+). Typed as Any? so the property is
+    // valid on the iOS 14 deployment target; cast under #available before use.
+    // Lets the selection/Copy menu present without the view being first responder.
+    private var editMenuInteractionStorage: Any?
     private var didFinishSetup = false
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     private var lastPointerLocation: CGPoint?
@@ -523,6 +527,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc open override func copy(_ sender: Any?) {
+        // The edit-menu Copy action bypasses canPerformAction validation, and
+        // the menu can outlive its selection (remote output invalidates it
+        // while the menu is up). getSelectedText() would read whatever now
+        // occupies the stale range, so never touch the pasteboard without an
+        // active selection.
+        guard selection.active else { return }
         UIPasteboard.general.string = selection.getSelectedText()
         selection.selectNone()
         disableSelectionPanGesture()
@@ -582,23 +592,42 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///  - pos: the location where this was triggered in the buffer, it used at a later point
     ///  to auto-select a word
     func showContextMenu (forRegion: CGRect, pos: Position) {
-        var items: [UIMenuItem] = []
-        
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
 
-        //GAR: Declutter context menu
-        //items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
-        
-        // Configure the shared menu controller
+        // Prefer UIEditMenuInteraction (iOS 16+): unlike UIMenuController it does
+        // not require the view to be first responder, so the selection/Copy menu
+        // works in hosts that decline first-responder status (e.g. Sigmux, where a
+        // sibling proxy owns the keyboard).
+        if #available(iOS 16.0, *),
+           let interaction = editMenuInteractionStorage as? UIEditMenuInteraction {
+            interaction.dismissMenu()
+            let sourcePoint = CGPoint(x: forRegion.midX, y: forRegion.minY)
+            interaction.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: sourcePoint))
+            return
+        }
+
+        // Fallback: classic shared menu controller (macOS / pre-iOS-16 / hosts
+        // that own first-responder status).
         let menuController = UIMenuController.shared
-        menuController.menuItems = items
-        
-        // Set the location of the menu in the view.
-        //let menuLocation = CGRect (origin: at, size: CGSize (width: cellDimension.width, height: cellDimension.height))
+        menuController.menuItems = []
         menuController.showMenu(from: self, rect: forRegion)
     }
-    
+
+    /// Dismisses the context menu regardless of which backend presented it
+    /// (UIEditMenuInteraction on iOS 16+, UIMenuController otherwise). Callers
+    /// that invalidate the selection must use this rather than
+    /// UIMenuController.shared.hideMenu(), which is a no-op for the edit menu.
+    func hideContextMenu () {
+        if #available(iOS 16.0, *),
+           let interaction = editMenuInteractionStorage as? UIEditMenuInteraction {
+            interaction.dismissMenu()
+        }
+        if UIMenuController.shared.isMenuVisible {
+            UIMenuController.shared.hideMenu()
+        }
+    }
+
     // This is a position relative to the buffer
     var lastLongSelect: Position?
     var lastLongSelectRegion = CGRect.zero
@@ -756,10 +785,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             queuePendingDisplay()
         } else {
+            // Hosts that refuse first-responder status (e.g. Sigmux, where a
+            // sibling proxy owns the keyboard) never run the branch above, so
+            // tap-to-deselect must happen here — otherwise no touch path ever
+            // clears an active selection.
+            if gestureRecognizer.state == .ended, selection.active {
+                selection.selectNone()
+                disableSelectionPanGesture()
+                queuePendingDisplay()
+            }
+            hideContextMenu()
             let _ = becomeFirstResponder ()
         }
     }
-    
+
     @objc func doubleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }
@@ -1095,6 +1134,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         singleTap.require(toFail: doubleTap)
         doubleTap.require(toFail: tripleTap)
+
+        if #available(iOS 16.0, *) {
+            let editMenu = UIEditMenuInteraction(delegate: self)
+            addInteraction(editMenu)
+            editMenuInteractionStorage = editMenu
+        }
     }
 
     func setupLinkReportingInteractions ()
@@ -2695,7 +2740,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #endif
             
             if !self.selection.active {
-                UIMenuController.shared.hideMenu()
+                self.hideContextMenu()
                 self.selection.selectNone()
                 self.disableSelectionPanGesture()
             }
@@ -2780,6 +2825,39 @@ extension TerminalViewDelegate {
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
+    }
+}
+
+@available(iOS 16.0, *)
+extension TerminalView: UIEditMenuInteractionDelegate {
+    public func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        var actions: [UIAction] = []
+        if selection?.active == true {
+            actions.append(UIAction(title: "Copy") { [weak self] _ in
+                self?.copy(nil)
+            })
+        } else {
+            actions.append(UIAction(title: "Select") { [weak self] _ in
+                self?.select(nil)
+            })
+        }
+        actions.append(UIAction(title: "Select All") { [weak self] _ in
+            guard let self else { return }
+            self.selectAll(nil)
+            DispatchQueue.main.async {
+                self.showContextMenu(
+                    forRegion: self.makeContextMenuRegionForSelection(),
+                    pos: self.lastLongSelect ?? Position(col: 0, row: 0))
+            }
+        })
+        actions.append(UIAction(title: "Paste") { [weak self] _ in
+            self?.paste(nil)
+        })
+        return UIMenu(children: actions)
     }
 }
 
