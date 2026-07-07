@@ -217,6 +217,9 @@ public class EscapeSequenceParser {
         table.add (codes: printables, state: .sosPmApcString, action: .ignore, next: .sosPmApcString)
         table.add (codes: executables, state: .sosPmApcString, action: .ignore, next: .sosPmApcString)
         table.add (code: 0x9c, state: .sosPmApcString, action: .ignore, next: .ground)
+        // tmux terminates the screen-title string on BEL as well as ST;
+        // accept both (BEL is harmless for SOS/PM, which nothing emits).
+        table.add (code: 0x07, state: .sosPmApcString, action: .ignore, next: .ground)
         table.add (code: 0x7f, state: .sosPmApcString, action: .ignore, next: .sosPmApcString)
         // csi entries
         table.add (code: 0x5b, state: .escape, action: .clear, next: .csiEntry)
@@ -248,6 +251,11 @@ public class EscapeSequenceParser {
         table.add (codes: r (low: 0x51, high: 0x58), state: .escape, action: .escDispatch, next: .ground)
         table.add (codes: [0x59, 0x5a, 0x5c], state: .escape, action: .escDispatch, next: .ground)
         table.add (codes: r (low: 0x60, high: 0x7f), state: .escape, action: .escDispatch, next: .ground)
+        // 0x6b ('k') is the screen/tmux title escape (ESC k <title> ST):
+        // shells inside tmux emit it from preexec/precmd title hooks. The
+        // payload must be consumed like SOS/PM, never rendered as text.
+        // Registered after the 0x60-0x7f escDispatch range so it overrides it.
+        table.add (code: 0x6b, state: .escape, action: .ignore, next: .sosPmApcString)
         // dcs entry
         table.add (code: 0x50, state: .escape, action: .clear, next: .dcsEntry)
         table.add (codes: executables, state: .dcsEntry, action: .ignore, next: .dcsEntry)
