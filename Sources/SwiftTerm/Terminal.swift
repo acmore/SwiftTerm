@@ -355,10 +355,20 @@ open class Terminal {
     private var synchronizedOutputActive: Bool = false
     private var synchronizedOutputBuffer: Buffer?
     private var synchronizedOutputBufferIsAlternate: Bool = false
+    private var synchronizedOutputCursorHidden: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
 
     var displayBuffer: Buffer {
         synchronizedOutputBuffer ?? buffer
+    }
+
+    /// Cursor visibility as it should be drawn: frozen with the buffer
+    /// snapshot while synchronized output (DEC 2026) is active. Apps and
+    /// tmux hide the cursor at the start of a synchronized redraw and show
+    /// it at the end; reading the live flag let a redraw split across reads
+    /// hide and re-show the caret mid-frame, restarting its blink.
+    var displayCursorHidden: Bool {
+        synchronizedOutputBuffer != nil ? synchronizedOutputCursorHidden : cursorHidden
     }
 
     var isDisplayBufferAlternate: Bool {
@@ -5556,9 +5566,11 @@ open class Terminal {
             synchronizedOutputActive = true
             synchronizedOutputBuffer = snapshotBuffer(buffer)
             synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
+            synchronizedOutputCursorHidden = cursorHidden
         } else if synchronizedOutputBuffer == nil {
             synchronizedOutputBuffer = snapshotBuffer(buffer)
             synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
+            synchronizedOutputCursorHidden = cursorHidden
         }
         scheduleSynchronizedOutputTimeout()
         if !wasActive {

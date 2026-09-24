@@ -40,6 +40,10 @@ class CaretView: UIView {
     
     var style: CursorStyle {
         didSet {
+            // tmux re-sends DECSCUSR with every redraw; restarting the blink
+            // on an unchanged style made the blink rhythm follow the app's
+            // redraw timing instead of a steady period.
+            guard style != oldValue else { return }
             updateCursorStyle ()
         }
     }

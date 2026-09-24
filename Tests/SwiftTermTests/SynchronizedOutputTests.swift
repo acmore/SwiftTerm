@@ -52,4 +52,24 @@ final class SynchronizedOutputTests {
         terminal.feed(text: "\(esc)[?2026l")
         #expect(topLineText(from: terminal.displayBuffer).hasPrefix("NEW"))
     }
+
+    /// tmux 3.7 redraws a pane as ?2026h ?25l … ?25h CUP ?2026l. When that
+    /// frame arrives in two reads, the caret must not see the mid-frame hide.
+    @Test func testSynchronizedOutputFreezesCursorVisibility() {
+        let terminal = Terminal(
+            delegate: TestDelegate(),
+            options: TerminalOptions(cols: 20, rows: 5, scrollback: 0)
+        )
+        let esc = "\u{1b}"
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?25l\(esc)[HREDRAW")
+        #expect(terminal.cursorHidden)
+        #expect(terminal.displayCursorHidden == false, "the first read of the frame hides the cursor; the display must not")
+
+        terminal.feed(text: "\(esc)[?25h\(esc)[3;1H\(esc)[?2026l")
+        #expect(terminal.displayCursorHidden == false)
+
+        terminal.feed(text: "\(esc)[?2026h\(esc)[?25l\(esc)[?2026l")
+        #expect(terminal.displayCursorHidden, "a frame that ends hidden hides the cursor once it is released")
+    }
 }
