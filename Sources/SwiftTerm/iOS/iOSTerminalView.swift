@@ -2811,6 +2811,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
+    public func linesMoved(source: Terminal, startRow: Int, endRow: Int) {
+        // Content under a live selection shifted in place (tmux / full-screen
+        // programs scrolling a region). Its rows now hold other text; drop it
+        // rather than let Copy return the wrong lines.
+        guard selection.active else { return }
+        let low = min(selection.start.row, selection.end.row)
+        let high = max(selection.start.row, selection.end.row)
+        guard high >= startRow && low <= endRow else { return }
+        selection.selectNone()
+        disableSelectionPanGesture()
+        hideContextMenu()
+    }
+
     public func clipboardCopy(source: Terminal, content: Data) {
         terminalDelegate?.clipboardCopy(source: self, content: content)
     }

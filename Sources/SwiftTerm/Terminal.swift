@@ -200,6 +200,15 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementation does nothing.
      */
     func clipboardCopy(source: Terminal, content: Data)
+
+    /**
+     * Invoked when rows `startRow...endRow` (absolute buffer rows) had their
+     * content shifted in place: region scrolls, SU / SD, IL / DL, reverse
+     * index. Holders of row positions (a selection) can no longer trust
+     * those rows. Lines flowing into scrollback do not trigger this: their
+     * absolute rows are stable. The default implementation does nothing.
+     */
+    func linesMoved(source: Terminal, startRow: Int, endRow: Int)
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
@@ -2521,6 +2530,7 @@ open class Terminal {
         let maxLines = buffer.lines.maxLength * 2
         var p = min (maxLines, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
+        noteLinesMoved(row, buffer.scrollBottom + buffer.yBase)
         
         let scrollBottomRowsOffset = rows - 1 - buffer.scrollBottom
         let scrollBottomAbsolute = rows - 1 + buffer.yBase - scrollBottomRowsOffset + 1
@@ -4763,6 +4773,7 @@ open class Terminal {
         let da = CharData.defaultAttr
 
         let row = buffer.scrollTop + buffer.yBase
+        noteLinesMoved(row, buffer.scrollBottom + buffer.yBase)
 
         let columnCount = buffer.marginRight-buffer.marginLeft+1
         let rowCount = buffer.scrollBottom-buffer.scrollTop
@@ -4787,6 +4798,7 @@ open class Terminal {
     {
         let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
         let da = CharData.defaultAttr
+        noteLinesMoved(buffer.scrollTop + buffer.yBase, buffer.scrollBottom + buffer.yBase)
 
         if marginMode {
             let row = buffer.scrollTop + buffer.yBase
@@ -4855,6 +4867,7 @@ open class Terminal {
         // a denial of service caused by very large numbers passed here
         let p = min (buffer.rows+1, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
+        noteLinesMoved(row, buffer.scrollBottom + buffer.yBase)
         var j = rows - 1 - buffer.scrollBottom
         j = rows - 1 + buffer.yBase - j
         let ea = eraseAttr ()
@@ -5287,6 +5300,11 @@ open class Terminal {
     
     var blankLine: BufferLine = BufferLine(cols: 0)
     
+    func noteLinesMoved(_ startRow: Int, _ endRow: Int) {
+        guard endRow >= startRow else { return }
+        tdel?.linesMoved(source: self, startRow: startRow, endRow: endRow)
+    }
+
     public func scroll (isWrapped: Bool = false)
     {
         let buffer = self.buffer
@@ -5313,6 +5331,7 @@ open class Terminal {
         // active, regardless of cursor position, to ensure consistent behavior.
         let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
         if hasNarrowMargins {
+            noteLinesMoved(topRow, bottomRow)
             let scrollRegionHeight = bottomRow - topRow + 1
             let columnCount = bMarginRight - bMarginLeft + 1
             let ea = eraseAttr()
@@ -5357,6 +5376,8 @@ open class Terminal {
                     lines.push (BufferLine (from: newLine))
                 }
             } else {
+                // Rows below the region (a status line) shift down by one.
+                noteLinesMoved(bottomRow + 1, lines.count - 1)
                 lines.splice (start: bottomRow + 1, deleteCount: 0,
                                      items: [BufferLine (from: newLine)],
                                      change: { line in updateRange (line)})
@@ -5391,6 +5412,7 @@ open class Terminal {
                 return
             }
 
+            noteLinesMoved(topRow, bottomRow)
             let scrollRegionHeight = bottomRow - topRow + 1 /*as it's zero-based*/
             if scrollRegionHeight > 1 {
                 if !lines.shiftElements (start: topRow + 1, count: scrollRegionHeight - 1, offset: -1) {
@@ -5995,6 +6017,7 @@ open class Terminal {
                 // blankLine(true) is xterm/linux behavior
                 let topRow = buffer.yBase + buffer.scrollTop
                 let bottomRow = buffer.yBase + buffer.scrollBottom
+                noteLinesMoved(topRow, bottomRow)
 
                 // Ensure the start index is within bounds to prevent crash (issue #256)
                 // This can happen when the buffer has been trimmed and yBase is stale
@@ -6912,6 +6935,8 @@ open class Terminal {
 
 // Default implementations
 public extension TerminalDelegate {
+    func linesMoved(source: Terminal, startRow: Int, endRow: Int) {}
+
     func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
     {
         // Do nothing
