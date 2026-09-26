@@ -1825,22 +1825,32 @@ open class Terminal {
         }
     }
     
-    // Copy to clipboard with sequence on the form:
-    //    ESC ] 52 ; c ; [base64 data] \a
-    // where c is for copy and the only thing supported.
+    // Copy to clipboard: ESC ] 52 ; Pc ; Pd BEL|ST
+    //   Pc: selection targets, zero or more of c p q s 0-7 (xterm). Empty is
+    //       legal and common: tmux's default Ms capability sends `52;;<b64>`
+    //       for copy-mode selections. The host decides where content goes,
+    //       so every target set is treated as "copy".
+    //   Pd: base64 payload. `?` is a read request; it is never answered
+    //       (a remote program must not read the local clipboard). An empty
+    //       Pd (xterm: clear selection) is ignored rather than wiping the
+    //       host clipboard.
     func oscClipboard (_ data: ArraySlice<UInt8>) {
-        // we require data to start with c; followed by base64 content
-        guard data.count >= 2,
-              data[data.startIndex] == UInt8(ascii: "c"),
-              data[data.startIndex+1] == UInt8(ascii: ";") else {
+        guard let separator = data.firstIndex(of: UInt8(ascii: ";")) else {
             return
         }
-        
-        let base64 = Data(data[(data.startIndex+2)...])
-        guard let content = Data(base64Encoded: base64) else {
+        let validTargets = Set("cpqs01234567".utf8)
+        guard data[data.startIndex..<separator].allSatisfy({ validTargets.contains($0) }) else {
             return
         }
-        
+        let payload = data[data.index(after: separator)...]
+        guard !payload.isEmpty, payload.first != UInt8(ascii: "?") else {
+            return
+        }
+        guard let content = Data(base64Encoded: Data(payload), options: .ignoreUnknownCharacters),
+              !content.isEmpty else {
+            return
+        }
+
         tdel?.clipboardCopy(source: self, content: content)
     }
     

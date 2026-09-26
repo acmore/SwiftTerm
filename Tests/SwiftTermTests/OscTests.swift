@@ -31,6 +31,53 @@ final class SwiftTermOsc {
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
     }
 
+    private final class ClipboardDelegate: TerminalDelegate {
+        private(set) var copies: [Data] = []
+
+        func clipboardCopy(source: Terminal, content: Data) {
+            copies.append(content)
+        }
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {}
+    }
+
+    private func clipboardCopies(for input: String) -> [String] {
+        let delegate = ClipboardDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+        terminal.feed(text: input)
+        return delegate.copies.map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    @Test func testOsc52CopyWithClipboardTarget() {
+        // "hello" in base64
+        #expect(clipboardCopies(for: "\u{1b}]52;c;aGVsbG8=\u{07}") == ["hello"])
+    }
+
+    @Test func testOsc52CopyWithEmptyTargetAsTmuxSends() {
+        #expect(clipboardCopies(for: "\u{1b}]52;;aGVsbG8=\u{1b}\\") == ["hello"])
+    }
+
+    @Test func testOsc52CopyWithMultipleTargets() {
+        #expect(clipboardCopies(for: "\u{1b}]52;ps0;aGVsbG8=\u{07}") == ["hello"])
+    }
+
+    @Test func testOsc52ReadRequestIsNeverAnswered() {
+        #expect(clipboardCopies(for: "\u{1b}]52;c;?\u{07}").isEmpty)
+    }
+
+    @Test func testOsc52EmptyPayloadDoesNotClearClipboard() {
+        #expect(clipboardCopies(for: "\u{1b}]52;c;\u{07}").isEmpty)
+    }
+
+    @Test func testOsc52RejectsInvalidTargetsAndPayloads() {
+        #expect(clipboardCopies(for: "\u{1b}]52;x;aGVsbG8=\u{07}").isEmpty)
+        #expect(clipboardCopies(for: "\u{1b}]52;aGVsbG8=\u{07}").isEmpty)
+        #expect(clipboardCopies(for: "\u{1b}]52;c;!!!!\u{07}").isEmpty)
+    }
+
     @Test func testOscTitleBelTerminator() {
         let delegate = TitleDelegate()
         let terminal = Terminal(
