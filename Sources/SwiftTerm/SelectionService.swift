@@ -356,6 +356,135 @@ public class SelectionService: CustomDebugStringConvertible {
         }
     }
     
+    // MARK: Structured selection (touch hosts)
+
+    /// Normalized selected buffer rows, nil when nothing is selected.
+    public var selectedRows: ClosedRange<Int>? {
+        guard active else { return nil }
+        return min(start.row, end.row)...max(start.row, end.row)
+    }
+
+    private func isBlank(_ row: Int, in buffer: Buffer) -> Bool {
+        guard row >= 0, row < buffer.lines.count else { return true }
+        return buffer.lines[row].getTrimmedLength() == 0
+    }
+
+    /// Column of the first non-space cell, nil for a blank row.
+    private func indent(_ row: Int, in buffer: Buffer) -> Int? {
+        guard row >= 0, row < buffer.lines.count else { return nil }
+        let text = buffer.lines[row].translateToString(trimRight: true)
+        guard let first = text.firstIndex(where: { $0 != " " }) else { return nil }
+        return text.distance(from: text.startIndex, to: first)
+    }
+
+    private func isWrappedContinuation(_ row: Int, in buffer: Buffer) -> Bool {
+        guard row > 0, row < buffer.lines.count else { return false }
+        return buffer.lines[row].isWrapped
+    }
+
+    /// Rows of the logical line containing `row` (soft-wrapped rows joined).
+    public func logicalLineRange(containing row: Int, in buffer: Buffer) -> ClosedRange<Int> {
+        let last = max(0, buffer.lines.count - 1)
+        var top = min(max(0, row), last)
+        while top > 0 && isWrappedContinuation(top, in: buffer) { top -= 1 }
+        var bottom = min(max(0, row), last)
+        while bottom < last && isWrappedContinuation(bottom + 1, in: buffer) { bottom += 1 }
+        return top...bottom
+    }
+
+    /// The block around `row`:
+    /// - a hanging-indent block — a head line at column 0 followed by
+    ///   indented or blank lines (an agent reply, a tool call and its output,
+    ///   a bullet list) — running until the next column-0 line;
+    /// - otherwise the paragraph of non-blank lines around `row`.
+    /// Trailing blank rows are never part of a block.
+    public func blockRange(containing row: Int, in buffer: Buffer) -> ClosedRange<Int> {
+        let last = max(0, buffer.lines.count - 1)
+        let row = min(max(0, row), last)
+
+        // Find the head: nearest row at or above `row` that starts at column 0.
+        var head = row
+        while head > 0 {
+            if let i = indent(head, in: buffer), i == 0, !isWrappedContinuation(head, in: buffer) { break }
+            head -= 1
+        }
+        var bottom = head
+        var sawIndented = false
+        var probe = head + 1
+        while probe <= last {
+            if isWrappedContinuation(probe, in: buffer) { bottom = probe; probe += 1; continue }
+            if let i = indent(probe, in: buffer) {
+                if i == 0 { break }
+                sawIndented = true
+                bottom = probe
+            }
+            probe += 1
+        }
+        if sawIndented && row >= head && row <= bottom && indent(head, in: buffer) == 0 {
+            return head...bottom
+        }
+
+        // Paragraph fallback: contiguous non-blank rows around `row`.
+        guard !isBlank(row, in: buffer) else { return logicalLineRange(containing: row, in: buffer) }
+        var top = row
+        while top > 0 && !isBlank(top - 1, in: buffer) { top -= 1 }
+        var end = row
+        while end < last && !isBlank(end + 1, in: buffer) { end += 1 }
+        return top...end
+    }
+
+    /// The range the user started from (a word, line, block). Tap-to-extend
+    /// grows the selection from it in whole rows and never loses it.
+    public private(set) var anchor: (start: Position, end: Position)?
+
+    /// Records the current range as the extension anchor.
+    public func markAnchor() {
+        guard active else { return }
+        anchor = (start, end)
+    }
+
+    /// Selects whole rows `rows` and anchors there.
+    public func selectRows(_ rows: ClosedRange<Int>) {
+        start = Position(col: 0, row: rows.lowerBound)
+        end = Position(col: terminal.cols - 1, row: rows.upperBound)
+        pivot = start
+        selectingRows = false
+        selectionMode = .character
+        anchor = (start, end)
+        setActiveAndNotify()
+    }
+
+    /// Everything from the first to the last non-blank row of `buffer`.
+    public func selectAllContent(in buffer: Buffer) {
+        let last = max(0, buffer.lines.count - 1)
+        var top = 0
+        while top < last && isBlank(top, in: buffer) { top += 1 }
+        var bottom = last
+        while bottom > top && isBlank(bottom, in: buffer) { bottom -= 1 }
+        selectRows(top...bottom)
+    }
+
+    /// Grows the selection from its anchor to cover `row` entirely: rows
+    /// above the anchor start at column 0, rows below end at the last
+    /// column. A row inside the anchor restores the anchor.
+    public func extend(toRow row: Int) {
+        guard active else { return }
+        let a = anchor ?? (start, end)
+        if anchor == nil { anchor = a }
+        let (aStart, aEnd) = Position.compare(a.start, a.end) == .after ? (a.end, a.start) : (a.start, a.end)
+        if row < aStart.row {
+            start = Position(col: 0, row: row)
+            end = aEnd
+        } else if row > aEnd.row {
+            start = aStart
+            end = Position(col: terminal.cols - 1, row: row)
+        } else {
+            start = aStart
+            end = aEnd
+        }
+        pivot = nil
+    }
+
     /// True if the selection spans more than one line
     public var isMultiLine: Bool {
         return start.row != end.row
@@ -904,6 +1033,7 @@ public class SelectionService: CustomDebugStringConvertible {
             rowSelectionAnchor = nil
             selectingRows = false
         }
+        anchor = nil
     }
     
     public func getSelectedText () -> String {

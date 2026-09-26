@@ -220,15 +220,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    // MARK: Host-driven selection (touch hosts that draw their own selection UI)
+
+    /// When false, selection never shows the floating edit menu; the host
+    /// provides its own controls (e.g. a selection toolbar).
+    public var showsSelectionEditMenu: Bool = true
+    /// When true, a long press selects the word under the finger instead of
+    /// only showing the edit menu.
+    public var longPressSelectsWord: Bool = false
+    /// When false, a single tap does not clear an active selection; the host
+    /// decides what a tap means while selecting (e.g. extend to the tap).
+    public var tapClearsSelection: Bool = true
+    /// Called on the main thread whenever the selection starts, changes
+    /// range, or ends.
+    public var onSelectionChanged: (() -> Void)?
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
 
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
-
-    /// A single tap on a non-first-responder host clears an active
-    /// selection. Hosts with their own selection toolbar turn this off.
-    public var tapClearsSelection: Bool = true
 
     /**
      * Consulted by `updateScroller()` before it commits a top row. It runs
@@ -768,6 +779,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///  - pos: the location where this was triggered in the buffer, it used at a later point
     ///  to auto-select a word
     func showContextMenu (forRegion: CGRect, pos: Position) {
+        guard showsSelectionEditMenu else { return }
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
 
@@ -827,6 +839,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
+         if gestureRecognizer.state == .began && longPressSelectsWord {
+             let hit = calculateTapHit(gesture: gestureRecognizer).grid
+             selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
+             selection.selectionMode = .character
+             selection.markAnchor()
+             enableSelectionPanGesture()
+             frameDriver.markDirty()
+             onSelectionChanged?()
+             return
+         }
          if gestureRecognizer.state == .began {
              let _ = self.becomeFirstResponder()
              let tapLocation = gestureRecognizer.location(in: gestureRecognizer.view)
@@ -1402,7 +1424,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .ended:
             stopSelectionTimer()
             if withTerminal({ _ in selection.active }) {
+                // A dragged handle defines the new range to extend from.
+                withTerminal { _ in selection.markAnchor() }
                 showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer).grid)
+                onSelectionChanged?()
             }
             break
         case .cancelled:
@@ -1850,7 +1875,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// for callers that don't have a UIResponder hook into the menu
     /// system (where `selectNone` would otherwise come from).
     public func clearSelection() {
-        selection?.selectNone()
+        let cleared = withTerminal { _ -> Bool in
+            guard selection.active else { return false }
+            selection.selectNone()
+            return true
+        }
+        guard cleared else { return }
+        disableSelectionPanGesture()
+        hideContextMenu()
+        frameDriver.markDirty()
     }
 
     /// Programmatically presents SwiftTerm's standard Copy / Paste /
@@ -3658,7 +3691,95 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 self.withTerminal { _ in self.selection.selectNone() }
                 self.disableSelectionPanGesture()
             }
+            self.onSelectionChanged?()
         }
+    }
+
+    // MARK: Selection commands for host toolbars
+
+    /// Normalized selected buffer rows, nil when nothing is selected.
+    public var selectedRowRange: ClosedRange<Int>? { withTerminal { _ in selection.selectedRows } }
+
+    /// The selected text, nil when nothing is selected.
+    public var selectedText: String? { withTerminal { _ in selection.active ? selection.getSelectedText() : nil } }
+
+    /// Buffer row under a point in this view's coordinates.
+    public func bufferRow(at point: CGPoint) -> Int {
+        calculateTapHit(point: point).grid.row
+    }
+
+    /// Row the structured units (word / line / block) re-apply to.
+    private var anchorPosition: Position? {
+        withTerminal { _ in
+            guard selection.active else { return nil }
+            return selection.anchor?.start ?? selection.start
+        }
+    }
+
+    private func selectionDidChangeByHost() {
+        enableSelectionPanGesture()
+        frameDriver.markDirty()
+        onSelectionChanged?()
+    }
+
+    public func selectWordAtAnchor() {
+        guard let position = anchorPosition else { return }
+        withTerminal { terminal in
+            selection.selectWordOrExpression(at: position, in: terminal.displayBuffer)
+            selection.selectionMode = .character
+            selection.markAnchor()
+        }
+        selectionDidChangeByHost()
+    }
+
+    public func selectLineAtAnchor() {
+        guard let position = anchorPosition else { return }
+        withTerminal { terminal in
+            selection.selectRows(selection.logicalLineRange(containing: position.row, in: terminal.displayBuffer))
+        }
+        selectionDidChangeByHost()
+    }
+
+    public func selectBlockAtAnchor() {
+        guard let position = anchorPosition else { return }
+        withTerminal { terminal in
+            selection.selectRows(selection.blockRange(containing: position.row, in: terminal.displayBuffer))
+        }
+        selectionDidChangeByHost()
+    }
+
+    public func selectAllContent() {
+        withTerminal { terminal in selection.selectAllContent(in: terminal.displayBuffer) }
+        selectionDidChangeByHost()
+    }
+
+    /// Grows the selection from its anchor to cover the row under `point`.
+    public func extendSelection(to point: CGPoint) {
+        let row = bufferRow(at: point)
+        let extended = withTerminal { _ -> Bool in
+            guard selection.active else { return false }
+            selection.extend(toRow: row)
+            return true
+        }
+        guard extended else { return }
+        selectionDidChangeByHost()
+    }
+
+
+    /// The pan that drags selection handles; hosts can gate when it begins.
+    public var selectionPanGestureRecognizer: UIPanGestureRecognizer? { panSelectionGesture }
+
+    /// True when `point` is within a thumb's reach (22 pt) of either end of
+    /// the selection, so a drag there moves that end.
+    public func isNearSelectionHandle(_ point: CGPoint, radius: CGFloat = 22) -> Bool {
+        guard cellDimension.width > 0, cellDimension.height > 0 else { return false }
+        let hit = calculateTapHit(point: point).grid
+        let colReach = Int(ceil(radius / cellDimension.width))
+        let rowReach = Int(ceil(radius / cellDimension.height))
+        func near(_ p: Position) -> Bool {
+            abs(hit.row - p.row) <= rowReach && abs(hit.col - p.col) <= colReach
+        }
+        return withTerminal { _ in selection.active && (near(selection.start) || near(selection.end)) }
     }
 
     nonisolated open func isProcessTrusted(source: Terminal) -> Bool {
