@@ -213,6 +213,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    /// Buffer identity and trim count captured in feedPrepare, so feedFinish
+    /// can re-anchor a live selection when scrollback drops lines.
+    var selectionTrimBaseline: (buffer: ObjectIdentifier, trimmed: Int)?
     var debug: UIView?
     var pendingDisplay: Bool = false
 #if canImport(MetalKit)
@@ -1389,6 +1392,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineLeading: CGFloat = 0
     
     open func bufferActivated(source: Terminal) {
+        // Selection rows index the buffer that was active; after a switch
+        // (alternate screen in / out) they would point at unrelated text.
+        if selection.active {
+            selection.selectNone()
+            disableSelectionPanGesture()
+            hideContextMenu()
+        }
         updateScroller ()
     }
     
@@ -1469,11 +1479,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func linefeed(source: Terminal) {
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
-            selection.selectNone()
-            disableSelectionPanGesture()
-        }
+        // Output no longer clears the selection (see feedPrepare): a touch
+        // selection must survive spinners and status-line redraws.
     }
     
     func updateScroller ()

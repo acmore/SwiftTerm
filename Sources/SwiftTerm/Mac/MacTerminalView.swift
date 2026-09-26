@@ -125,6 +125,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
 
     var accessibility: AccessibilityService = AccessibilityService()
     var search: SearchService!
+    /// Buffer identity and trim count captured in feedPrepare, so feedFinish
+    /// can re-anchor a live selection when scrollback drops lines.
+    var selectionTrimBaseline: (buffer: ObjectIdentifier, trimmed: Int)?
     private var findBar: TerminalFindBarView?
     private var findBarTerm: String = ""
     private var findBarOptions: SearchOptions = SearchOptions()

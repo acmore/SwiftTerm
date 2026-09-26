@@ -2098,15 +2098,23 @@ extension TerminalView {
             pendingViewportTopVisibleRow = nil
         }
         search.invalidate()
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        if allowMouseReporting {
-            selection.active = false
-        }
+        // The selection is kept while output streams: TUIs repaint spinners
+        // and status clocks many times a second, and clearing on every chunk
+        // meant a touch selection never lived long enough to copy. Positions
+        // are buffer rows, so they stay on their text; feedFinish re-anchors
+        // them when scrollback trims lines off the front.
+        selectionTrimBaseline = (ObjectIdentifier(terminal.buffer), terminal.buffer.lines.trimmedCount)
         startDisplayUpdates()
     }
     
     func feedFinish ()
     {
+        if let baseline = selectionTrimBaseline {
+            selectionTrimBaseline = nil
+            if baseline.buffer == ObjectIdentifier(terminal.buffer) {
+                selection.shiftForTrimmedLines(terminal.buffer.lines.trimmedCount - baseline.trimmed)
+            }
+        }
         if let resolver = viewportFollowResolver,
            let resolved = resolver(viewportSnapshot) {
             setTopVisibleRow(resolved)

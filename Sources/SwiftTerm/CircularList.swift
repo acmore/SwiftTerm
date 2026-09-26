@@ -15,6 +15,9 @@ enum ArgumentError : Error {
 class CircularList<T> {
     private var array: [T?]
     private var startIndex: Int
+    /// Lines dropped off the front since creation (scrollback full). Lets
+    /// holders of absolute row indices, such as a live selection, re-anchor.
+    private(set) var trimmedCount = 0
     var count: Int {
         get {
             return _count
@@ -92,6 +95,7 @@ class CircularList<T> {
     {
         array [getCyclicIndex(count)] = value
         if count == array.count {
+            trimmedCount &+= 1
             startIndex = startIndex + 1
             if startIndex == array.count {
                 startIndex = 0
@@ -108,6 +112,7 @@ class CircularList<T> {
             abort ()
         }
         let index = getCyclicIndex(count)
+        trimmedCount &+= 1
         startIndex += 1
         startIndex = startIndex % maxLength
         array [index] = makeEmpty! (-1)
@@ -197,6 +202,7 @@ class CircularList<T> {
                 self._count += expandListBy
                 while self._count > maxLength {
                     self._count -= 1
+                    trimmedCount &+= 1
                     startIndex += 1
                     // trimmed callback invoke
                 }
@@ -219,6 +225,9 @@ class CircularList<T> {
 internal class CircularBufferLineList {
     private var array: [BufferLine?]
     private var startIndex: Int
+    /// Lines dropped off the front since creation (scrollback full). Lets
+    /// holders of absolute row indices, such as a live selection, re-anchor.
+    private(set) var trimmedCount = 0
     var count: Int {
         get {
             return _count
@@ -310,6 +319,7 @@ internal class CircularBufferLineList {
     {
         array [getCyclicIndex(count)] = value
         if count == array.count {
+            trimmedCount &+= 1
             startIndex = startIndex + 1
             if startIndex == array.count {
                 startIndex = 0
@@ -327,6 +337,7 @@ internal class CircularBufferLineList {
             abort ()
         }
         let index = getCyclicIndex(count)
+        trimmedCount &+= 1
         startIndex += 1
         startIndex = startIndex % maxLength
         let hadImages = array[index]?.images != nil
@@ -415,6 +426,7 @@ internal class CircularBufferLineList {
                 self._count += expandListBy
                 while self._count > maxLength {
                     self._count -= 1
+                    trimmedCount &+= 1
                     startIndex += 1
                     // trimmed callback invoke
                 }

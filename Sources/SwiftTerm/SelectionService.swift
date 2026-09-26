@@ -80,6 +80,22 @@ class SelectionService: CustomDebugStringConvertible {
         }
     }
     
+    /// Re-anchors the selection after `lines` rows were trimmed off the front
+    /// of the buffer, so it keeps covering the same text. A selection whose
+    /// end scrolled out of the buffer entirely is cleared.
+    func shiftForTrimmedLines(_ lines: Int) {
+        guard active, lines > 0 else { return }
+        if end.row - lines < 0 && start.row - lines < 0 {
+            selectNone()
+            return
+        }
+        start = Position(col: start.row - lines < 0 ? 0 : start.col, row: max(0, start.row - lines))
+        end = Position(col: end.row - lines < 0 ? 0 : end.col, row: max(0, end.row - lines))
+        if let p = pivot {
+            pivot = Position(col: p.col, row: max(0, p.row - lines))
+        }
+    }
+
     /// True if the selection spans more than one line
     public var isMultiLine: Bool {
         return start.row != end.row

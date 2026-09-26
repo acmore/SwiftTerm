@@ -15,6 +15,44 @@ final class SelectionTests: TerminalDelegate {
         print ("here")
     }
     
+    /// rows 3 + scrollback 2 = a 5-line buffer; lines "a".."e" fill it.
+    private func fullBufferTerminal() -> Terminal {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 3, scrollback: 2))
+        terminal.feed(text: "a\r\nb\r\nc\r\nd\r\ne")
+        return terminal
+    }
+
+    @Test func testTrimmedCountTracksLinesDroppedFromScrollback() {
+        let terminal = fullBufferTerminal()
+        let before = terminal.buffer.lines.trimmedCount
+        terminal.feed(text: "\r\nf\r\ng")
+        #expect(terminal.buffer.lines.trimmedCount - before == 2)
+    }
+
+    @Test func testShiftKeepsSelectionOnTheSameText() {
+        let terminal = fullBufferTerminal()
+        let selection = SelectionService(terminal: terminal)
+        selection.select(row: 3)
+        #expect(selection.getSelectedText().trimmingCharacters(in: .whitespaces) == "d")
+
+        let before = terminal.buffer.lines.trimmedCount
+        terminal.feed(text: "\r\nf\r\ng")
+        selection.shiftForTrimmedLines(terminal.buffer.lines.trimmedCount - before)
+
+        #expect(selection.active)
+        #expect(selection.getSelectedText().trimmingCharacters(in: .whitespaces) == "d")
+    }
+
+    @Test func testShiftClearsSelectionThatLeftTheBuffer() {
+        let terminal = fullBufferTerminal()
+        let selection = SelectionService(terminal: terminal)
+        selection.select(row: 0)
+
+        selection.shiftForTrimmedLines(2)
+
+        #expect(!selection.active)
+    }
+
     @Test func testDoesNotCrashWhenSelectingWordOrExpressionOutsideColumnRange() {
         let terminal = Terminal(delegate: self, options: TerminalOptions (cols: 10, rows: 10))
         let selection = SelectionService(terminal: terminal)
