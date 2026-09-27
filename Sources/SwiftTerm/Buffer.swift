@@ -250,7 +250,6 @@ public final class Buffer {
         }
     }
     
-    private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
@@ -1151,6 +1150,7 @@ public final class Buffer {
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
+            clearPartialWideCharacters(in: row, start: _x, end: _x + runLen, attribute: attribute)
             for i in 0..<runLen {
                 row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
             }
@@ -1162,6 +1162,21 @@ public final class Buffer {
             lastBufferStorage = (_y + _yBase, _x - 1, _cols, _rows)
         }
         return consumed
+    }
+
+    /// Writing one half of a wide glyph invalidates the other half too.
+    /// Only the edges need checking: cells inside the range are overwritten.
+    /// In particular, a TUI may clear a wide glyph by writing a single space
+    /// over its head and leave its continuation cell untouched.
+    private func clearPartialWideCharacters(in row: BufferLine, start: Int, end: Int, attribute: Attribute) {
+        guard start >= 0, start < end, start < row.count else { return }
+        let blank = CharData(attribute: Attribute(fg: CharData.defaultAttr.fg, bg: attribute.bg, style: .none))
+        if start > 0, row[start].width == 0, row[start - 1].width == 2 {
+            row[start - 1] = blank
+        }
+        if end < row.count, row[end - 1].width == 2 {
+            row[end] = blank
+        }
     }
 
     func insertCharacter(_ charData: CharData) {
@@ -1203,7 +1218,7 @@ public final class Buffer {
         // insert mode: move characters to right
         if insertMode {
             var empty = CharData.Null
-            empty.attribute = curAttr
+            empty.attribute = charData.attribute
             // right shift cells according to the width
             bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
             // test last cell - since the last cell has only room for
@@ -1220,6 +1235,7 @@ public final class Buffer {
         if _x >= _cols {
             _x = _cols-1
         }
+        clearPartialWideCharacters(in: bufferRow, start: _x, end: _x + chWidth, attribute: charData.attribute)
         bufferRow[_x] = charData
         _x += 1
 
@@ -1227,7 +1243,7 @@ public final class Buffer {
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 1 {
-            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+            let wideEmpty = CharData(attribute: charData.attribute, scalar: UnicodeScalar(0)!, size: 0)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow [_x] = wideEmpty
