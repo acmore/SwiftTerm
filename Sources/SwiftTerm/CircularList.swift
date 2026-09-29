@@ -227,6 +227,11 @@ internal final class CircularBufferLineList {
     @exclusivity(unchecked) private var array: [BufferLine?]
 #endif
     private var startIndex: Int
+    /// Lines dropped off the front since creation (scrollback full). Lets
+    /// holders of absolute row indices, such as a selection handle being
+    /// dragged, re-anchor. In-place region scrolls do not count: they keep
+    /// the start index.
+    private(set) var trimmedCount = 0
     var count: Int {
         get {
             return _count
@@ -382,6 +387,7 @@ internal final class CircularBufferLineList {
         let index = startIndex
         let next = startIndex &+ 1
         startIndex = next == maxLength ? 0 : next
+        trimmedCount &+= 1
         // The array owns the line until this function finishes using it.
 #if SWIFTTERM_EMBEDDED
         let line = array[index]!
@@ -494,7 +500,7 @@ internal final class CircularBufferLineList {
                     if !array.isEmpty {
                         startIndex %= array.count
                     }
-                    // trimmed callback invoke
+                    trimmedCount &+= 1
                 }
             }
         } else {
