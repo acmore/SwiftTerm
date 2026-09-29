@@ -996,76 +996,98 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         panTask = nil
     }
     
-    // The start of the pan operation, for the case where we are not sending the input to the client
-    var panStart: Position?
+    private struct SelectionHandleDrag {
+        let position: Position
+        let touch: CGPoint
+        let trimmedCount: Int
+    }
+    private var selectionHandleDrag: SelectionHandleDrag?
     var panTask: Task<(),Never>?
-    
-    @objc func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
-        func near (_ pos1: Position, _ pos2: Position) -> Bool {
-            return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
+
+    // UIPan begins after the finger has already travelled several points.
+    // Both arbitration and picking the endpoint must use the touch-down point.
+    private func selectionPanOrigin(_ pan: UIPanGestureRecognizer) -> CGPoint? {
+        (pan as? SelectionPanGestureRecognizer)?.touchDownLocation
+    }
+
+    open override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if let pan = panSelectionGesture, gestureRecognizer === pan {
+            guard let origin = selectionPanOrigin(pan) else { return false }
+            return isNearSelectionHandle(origin)
         }
-        
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
+    }
+
+    @objc func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
         switch gestureRecognizer.state {
         case .began:
-            let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            if selection.active {
-                var extend = false
-                if near (selection.start, hit) {
-                    selection.pivot = selection.end
-                    extend = true
-                } else if near (selection.end, hit) {
-                    selection.pivot = selection.start
-                    extend = true
-                }
-                if extend {
-                    selection.pivotExtend(bufferPosition: hit)
-                    requestDisplay()
-                    break
-                }
-            }
-            panStart = hit
-        case .changed:
-            let absoluteY = gestureRecognizer.location (in: self).y - contentOffset.y
-            let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            if selection.active {
-                stopSelectionTimer()
-                selection.pivotExtend(bufferPosition: hit)
-                gestureRecognizer.setTranslation(CGPoint.zero, in: self)
-                if absoluteY < 0 || absoluteY > bounds.height {
-                    startSelectionTimer {
-                        let newPlace = CGRect (x: 0, y: max (0, self.contentOffset.y+absoluteY), width: self.bounds.width, height: self.bounds.height)
-                        self.scrollRectToVisible(newPlace, animated: true)
-                    }
-                }
-                requestDisplay()
-            } else {
-                if let ps = panStart {
-                    let deltaRow = ps.row - hit.row
-                    if allowMouseReporting {
-                        // TODO: what scenario would have this?
-                        scrollDown (lines: deltaRow)
-                    } else {
-                        let deltaCol = ps.col - hit.col
-                        
-                        sendKey (deltaCol: deltaCol, deltaRow: deltaRow)
-                    }
-                }
-            }
-        case .ended:
             stopSelectionTimer()
-            if selection.active {
-                // A dragged handle defines the new range to extend from.
+            selectionHandleDrag = nil
+            guard let origin = selectionPanOrigin(gestureRecognizer),
+                  let handle = selectionHandle(at: origin, radius: 22) else { return }
+            selection.pivot = handle.fixed
+            // A handle always adjusts individual characters, even after a
+            // word, line, or block command created the initial range.
+            selection.selectionMode = .character
+            selectionHandleDrag = SelectionHandleDrag(position: handle.moving, touch: origin,
+                                                       trimmedCount: terminal.displayBuffer.lines.trimmedCount)
+            hideContextMenu()
+            updateSelectionHandleDrag(at: gestureRecognizer.location(in: self))
+        case .changed:
+            guard selectionHandleDrag != nil, selection.active else { return }
+            stopSelectionTimer()
+            let point = gestureRecognizer.location(in: self)
+            updateSelectionHandleDrag(at: point)
+            let viewportPoint = CGPoint(x: point.x, y: point.y - contentOffset.y)
+            if viewportPoint.y < 0 || viewportPoint.y > bounds.height {
+                startSelectionTimer { [weak self] in
+                    self?.scrollSelectionHandle(at: viewportPoint)
+                }
+            }
+        case .ended, .cancelled, .failed:
+            stopSelectionTimer()
+            if selectionHandleDrag != nil, selection.active {
+                if gestureRecognizer.state == .ended {
+                    updateSelectionHandleDrag(at: gestureRecognizer.location(in: self))
+                }
                 selection.markAnchor()
-                showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer).grid)
+                showContextMenu(forRegion: makeContextMenuRegionForSelection(), pos: selection.end)
                 onSelectionChanged?()
             }
-            break
-        case .cancelled:
-            stopSelectionTimer()
-            selection.active = false
+            selectionHandleDrag = nil
         default:
             break
         }
+    }
+
+    private func updateSelectionHandleDrag(at point: CGPoint) {
+        guard let drag = selectionHandleDrag, selection.active else { return }
+        // Preserve the finger-to-knob offset. Picking up a 44pt target must
+        // not teleport the endpoint to the cell beneath the finger.
+        let col = drag.position.col + Int(((point.x - drag.touch.x) / cellDimension.width).rounded())
+        let trimmed = terminal.displayBuffer.lines.trimmedCount - drag.trimmedCount
+        let row = drag.position.row - trimmed + Int(((point.y - drag.touch.y) / cellDimension.height).rounded())
+        let position = Position(col: min(max(0, col), terminal.cols),
+                                row: min(max(0, row), terminal.displayBuffer.lines.count - 1))
+        selection.pivotExtend(bufferPosition: position)
+        requestDisplay()
+    }
+
+    // Scroll a few rows per tick, not a viewport per tick. Keep updating the
+    // endpoint when the finger is held still outside the viewport.
+    func scrollSelectionHandle(at viewportPoint: CGPoint) {
+        guard selectionHandleDrag != nil, selection.active else {
+            stopSelectionTimer()
+            return
+        }
+        let overflow = viewportPoint.y < 0 ? viewportPoint.y : max(0, viewportPoint.y - bounds.height)
+        guard overflow != 0 else { return }
+        let rows = min(3, max(1, abs(overflow) / cellDimension.height))
+        let delta = (overflow < 0 ? -1 : 1) * rows * cellDimension.height
+        let maximum = max(0, contentSize.height - bounds.height)
+        let offset = min(max(0, contentOffset.y + delta), maximum)
+        setContentOffset(CGPoint(x: contentOffset.x, y: offset), animated: false)
+        updateSelectionHandleDrag(at: CGPoint(x: viewportPoint.x, y: viewportPoint.y + contentOffset.y))
     }
 
     private var shouldRouteNativeScrollToTerminal: Bool {
@@ -1132,12 +1154,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard panSelectionGesture == nil else {
             return
         }
-        let gesture = UIPanGestureRecognizer (target: self, action: #selector(panSelectionHandler))
+        let gesture = SelectionPanGestureRecognizer(target: self, action: #selector(panSelectionHandler))
+        gesture.maximumNumberOfTouches = 1
         addGestureRecognizer(gesture)
         self.panSelectionGesture = gesture
+        // A grab wins over scrolling; a drag elsewhere fails this recognizer
+        // immediately in gestureRecognizerShouldBegin and scrolls normally.
+        panGestureRecognizer.require(toFail: gesture)
+        for recognizer in gestureRecognizers ?? [] where recognizer is UILongPressGestureRecognizer {
+            recognizer.require(toFail: gesture)
+        }
     }
     
     func disableSelectionPanGesture() {
+        stopSelectionTimer()
+        selectionHandleDrag = nil
         guard let gesture = panSelectionGesture else {
             return
         }
@@ -2852,17 +2883,35 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// The pan that drags selection handles; hosts can gate when it begins.
     public var selectionPanGestureRecognizer: UIPanGestureRecognizer? { panSelectionGesture }
 
-    /// True when `point` is within a thumb's reach (22 pt) of either end of
-    /// the selection, so a drag there moves that end.
+    /// True when `point` hits a visible selection knob's 44pt touch target.
+    /// Coordinates are in this scroll view's content coordinate system.
     public func isNearSelectionHandle(_ point: CGPoint, radius: CGFloat = 22) -> Bool {
-        guard selection.active, cellDimension.width > 0, cellDimension.height > 0 else { return false }
-        let hit = calculateTapHit(point: point).grid
-        let colReach = Int(ceil(radius / cellDimension.width))
-        let rowReach = Int(ceil(radius / cellDimension.height))
-        func near(_ p: Position) -> Bool {
-            abs(hit.row - p.row) <= rowReach && abs(hit.col - p.col) <= colReach
+        selectionHandle(at: point, radius: radius) != nil
+    }
+
+    private func selectionHandle(at point: CGPoint, radius: CGFloat) -> (moving: Position, fixed: Position)? {
+        guard selection.active, cellDimension.width > 0, cellDimension.height > 0 else { return nil }
+        let reversed = Position.compare(selection.start, selection.end) == .after
+        let start = reversed ? selection.end : selection.start
+        let end = reversed ? selection.start : selection.end
+        var candidates: [(moving: Position, fixed: Position, distance: CGFloat)] = []
+        for (moving, fixed, isStart) in [(start, end, true), (end, start, false)] {
+            // Match the 12pt knobs drawn by AppleTerminalView: above the
+            // start cell and below the end cell, not the cells themselves.
+            let center = CGPoint(x: CGFloat(moving.col) * cellDimension.width,
+                                 y: CGFloat(moving.row + (isStart ? 0 : 1)) * cellDimension.height + (isStart ? -6 : 6))
+            let cellTop = CGFloat(moving.row) * cellDimension.height
+            guard cellTop + cellDimension.height > bounds.minY, cellTop < bounds.maxY else { continue }
+            // Keep the whole target reachable at the left/right screen edge.
+            let targetX = min(max(center.x, bounds.minX + radius), max(bounds.minX + radius, bounds.maxX - radius))
+            let target = CGRect(x: targetX - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            if target.contains(point) {
+                let dx = point.x - center.x, dy = point.y - center.y
+                candidates.append((moving, fixed, dx * dx + dy * dy))
+            }
         }
-        return near(selection.start) || near(selection.end)
+        guard let nearest = candidates.min(by: { $0.distance < $1.distance }) else { return nil }
+        return (nearest.moving, nearest.fixed)
     }
 
     open func isProcessTrusted(source: Terminal) -> Bool {
