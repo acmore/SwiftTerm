@@ -24,4 +24,17 @@ final class DisplayTextTests {
         #expect(terminal.getDisplayText(start: Position(col: 0, row: 0), end: Position(col: 10, row: 2)) == "中🙂 src/a.swift:42\nnext")
         #expect(terminal.getDisplayText(start: Position(col: 0, row: 0), end: Position(col: 5, row: 0)) == "中🙂 ")
     }
+
+    @Test func displayRowWidthTellsAFullRowFromAShortOne() {
+        let terminal = Terminal(delegate: Delegate(), options: TerminalOptions(cols: 10, rows: 6))
+        terminal.feed(text: "0123456789\r\nshort\r\n中文中文中\r\n")
+        #expect(terminal.displayRowWidth(row: 0) == 10)
+        #expect(terminal.displayRowWidth(row: 1) == 5)
+        #expect(terminal.displayRowWidth(row: 2) == 10)
+        #expect(terminal.displayRowWidth(row: 3) == 0)
+        #expect(terminal.displayRowWidth(row: -1) == 0)
+        #expect(terminal.displayRowWidth(row: 99) == 0)
+        terminal.feed(text: "\u{1B}[?2026h\u{1B}[H\u{1B}[2Kx")
+        #expect(terminal.displayRowWidth(row: 0) == 10, "frozen frame while synchronized output is active")
+    }
 }

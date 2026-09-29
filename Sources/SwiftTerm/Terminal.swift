@@ -9256,6 +9256,18 @@ open class Terminal {
         getText(start: start, end: end, buffer: displayBuffer)
     }
 
+    /// Number of cells a displayed buffer row uses, up to its last
+    /// non-blank cell (a wide character counts both cells). Equal to
+    /// `cols` when the row is full to the right edge, which is how a host
+    /// can tell that an application wrapped a line itself with a hard
+    /// newline. Zero for a blank row or a row outside the buffer.
+    public func displayRowWidth (row: Int) -> Int
+    {
+        let lines = displayBuffer.lines
+        guard row >= 0, row < lines.count else { return 0 }
+        return lines [row].getTrimmedLength ()
+    }
+
     func linkMatch(at location: LinkLookupLocation, mode: LinkLookupMode) -> LinkMatch?
     {
         let buffer = displayBuffer
