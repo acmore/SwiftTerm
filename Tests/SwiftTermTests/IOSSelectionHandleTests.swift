@@ -5,8 +5,13 @@ import XCTest
 
 @MainActor
 final class IOSSelectionHandleTests: XCTestCase {
-    private final class Pan: UIPanGestureRecognizer {
+    private final class Pan: SelectionPanGestureRecognizer {
         var point = CGPoint.zero
+        private var recordedOrigin: CGPoint?
+        override var touchDownLocation: CGPoint? {
+            get { recordedOrigin ?? CGPoint(x: point.x - movement.x, y: point.y - movement.y) }
+            set { recordedOrigin = newValue }
+        }
         var movement = CGPoint.zero
         var phase: UIGestureRecognizer.State = .began
         override var state: UIGestureRecognizer.State {
@@ -102,10 +107,25 @@ final class IOSSelectionHandleTests: XCTestCase {
         let origin = knob(view, start: false)
         pan.movement = CGPoint(x: 60, y: 0)
         pan.point = CGPoint(x: origin.x + 60, y: origin.y)
+        pan.touchDownLocation = origin
         XCTAssertTrue(view.gestureRecognizerShouldBegin(pan))
         // Dragging onto a handle from elsewhere must still scroll.
         pan.point = origin
+        pan.touchDownLocation = CGPoint(x: origin.x - 60, y: origin.y)
         XCTAssertFalse(view.gestureRecognizerShouldBegin(pan))
+    }
+
+    func testRecognitionSlopDoesNotConsumeShortDrag() {
+        let view = makeView()
+        let pan = Pan()
+        pan.point = knob(view, start: false)
+        pan.touchDownLocation = pan.point
+        // UIKit reports only 2pt of translation after a 12pt finger move.
+        pan.point.x -= 12
+        pan.movement.x = -2
+        view.panSelectionHandler(pan)
+        XCTAssertEqual(view.selection.end.col, 20 - Int((12 / view.cellDimension.width).rounded()))
+        XCTAssertEqual(view.selection.end.row, 12)
     }
 
     func testSmallVerticalJitterAndReturnToOriginDoNotChangeRows() {

@@ -1370,15 +1370,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // UIPan begins after the finger has already travelled several points.
     // Both arbitration and picking the endpoint must use the touch-down point.
-    private func selectionPanOrigin(_ pan: UIPanGestureRecognizer) -> CGPoint {
-        let point = pan.location(in: self)
-        let translation = pan.translation(in: self)
-        return CGPoint(x: point.x - translation.x, y: point.y - translation.y)
+    private func selectionPanOrigin(_ pan: UIPanGestureRecognizer) -> CGPoint? {
+        (pan as? SelectionPanGestureRecognizer)?.touchDownLocation
     }
 
     open override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if let pan = panSelectionGesture, gestureRecognizer === pan {
-            return isNearSelectionHandle(selectionPanOrigin(pan))
+            guard let origin = selectionPanOrigin(pan) else { return false }
+            return isNearSelectionHandle(origin)
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
@@ -1388,8 +1387,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .began:
             stopSelectionTimer()
             selectionHandleDrag = nil
-            let origin = selectionPanOrigin(gestureRecognizer)
-            guard let handle = selectionHandle(at: origin, radius: 22) else { return }
+            guard let origin = selectionPanOrigin(gestureRecognizer),
+                  let handle = selectionHandle(at: origin, radius: 22) else { return }
             selectionHandleDrag = withTerminal { terminal in
                 selection.pivot = handle.fixed
                 // A handle always adjusts individual characters, even after a
@@ -1492,7 +1491,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard panSelectionGesture == nil else {
             return
         }
-        let gesture = UIPanGestureRecognizer (target: self, action: #selector(panSelectionHandler))
+        let gesture = SelectionPanGestureRecognizer(target: self, action: #selector(panSelectionHandler))
         gesture.maximumNumberOfTouches = 1
         addGestureRecognizer(gesture)
         self.panSelectionGesture = gesture
