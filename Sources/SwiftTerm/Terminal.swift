@@ -9246,7 +9246,12 @@ open class Terminal {
         return linkMatch(at: location, mode: mode)?.text
     }
 
-    func getDisplayText (start: Position, end: Position) -> String
+    /// Returns text from the buffer currently displayed, using zero-based
+    /// buffer-relative cell positions and an exclusive end position.
+    /// During synchronized output (DEC 2026), this reads the frozen display
+    /// snapshot, matching native selection and link lookup. Use `getText`
+    /// when the caller explicitly needs the live, possibly unfinished frame.
+    public func getDisplayText (start: Position, end: Position) -> String
     {
         getText(start: start, end: end, buffer: displayBuffer)
     }
