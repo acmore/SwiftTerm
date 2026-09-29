@@ -150,6 +150,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// When true, a long press selects the word under the finger instead of
     /// only showing the edit menu.
     public var longPressSelectsWord: Bool = false
+
+    /// Show the system text loupe while selecting words or dragging handles.
+    /// Opt-in; available on iOS 17 and later. Other platforms keep selection
+    /// behavior unchanged. Does not make the terminal first responder.
+    public var showsSelectionMagnifier: Bool = false {
+        didSet { if !showsSelectionMagnifier { hideSelectionMagnifier() } }
+    }
+    private var selectionMagnifier: SelectionMagnifierSession?
+    private var longPressMagnifierAnchor: Position?
+    var makeSelectionMagnifier: (CGPoint, UIView) -> SelectionMagnifierSession? = {
+        SelectionMagnifierSession.begin(at: $0, in: $1)
+    }
     /// When false, a single tap does not clear an active selection; the host
     /// decides what a tap means while selecting (e.g. extend to the tap).
     public var tapClearsSelection: Bool = true
@@ -668,6 +680,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
+         if gestureRecognizer.state == .ended || gestureRecognizer.state == .cancelled || gestureRecognizer.state == .failed {
+             longPressMagnifierAnchor = nil
+             hideSelectionMagnifier()
+             return
+         }
+         if gestureRecognizer.state == .changed, let anchor = longPressMagnifierAnchor {
+             updateSelectionMagnifier(at: gestureRecognizer.location(in: self), position: anchor)
+             return
+         }
          if gestureRecognizer.state == .began && longPressSelectsWord {
              let hit = calculateTapHit(gesture: gestureRecognizer).grid
              selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
@@ -676,6 +697,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
              enableSelectionPanGesture()
              queuePendingDisplay()
              onSelectionChanged?()
+             longPressMagnifierAnchor = hit
+             updateSelectionMagnifier(at: gestureRecognizer.location(in: self), position: hit)
              return
          }
          if gestureRecognizer.state == .began {
@@ -1055,6 +1078,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 onSelectionChanged?()
             }
             selectionHandleDrag = nil
+            hideSelectionMagnifier()
         default:
             break
         }
@@ -1071,6 +1095,48 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                 row: min(max(0, row), terminal.displayBuffer.lines.count - 1))
         selection.pivotExtend(bufferPosition: position)
         requestDisplay()
+        updateSelectionMagnifier(at: point, position: position)
+    }
+
+    /// All coordinates remain in the scroll view's content space. Sample
+    /// the moving boundary, not the finger: a grab can be 22pt off the knob.
+    private func updateSelectionMagnifier(at touch: CGPoint, position: Position) {
+        guard showsSelectionMagnifier, selection.active, window != nil,
+              cellDimension.width > 0, cellDimension.height > 0 else {
+            hideSelectionMagnifier()
+            return
+        }
+        let caret = CGRect(x: min(max(CGFloat(position.col) * cellDimension.width, bounds.minX), bounds.maxX - 1),
+                           y: min(max(CGFloat(position.row) * cellDimension.height, bounds.minY),
+                                  max(bounds.minY, bounds.maxY - cellDimension.height)),
+                           width: 1, height: cellDimension.height)
+        if selectionMagnifier == nil {
+            selectionMagnifier = makeSelectionMagnifier(CGPoint(x: caret.midX, y: caret.midY), self)
+        }
+        selectionMagnifier?.move(touch, caret)
+    }
+
+    @objc private func hideSelectionMagnifier() {
+        selectionMagnifier?.invalidate()
+        selectionMagnifier = nil
+    }
+
+    @objc private func cancelSelectionMagnifierTracking() {
+        hideSelectionMagnifier()
+        longPressMagnifierAnchor = nil
+        selectionHandleDrag = nil
+        stopSelectionTimer()
+    }
+
+    open override func didMoveToWindow() {
+        super.didMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+        if window == nil {
+            cancelSelectionMagnifierTracking()
+        } else {
+            NotificationCenter.default.addObserver(self, selector: #selector(cancelSelectionMagnifierTracking),
+                                                   name: UIApplication.willResignActiveNotification, object: nil)
+        }
     }
 
     // Scroll a few rows per tick, not a viewport per tick. Keep updating the
@@ -1167,6 +1233,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     func disableSelectionPanGesture() {
+        hideSelectionMagnifier()
+        longPressMagnifierAnchor = nil
         stopSelectionTimer()
         selectionHandleDrag = nil
         guard let gesture = panSelectionGesture else {
@@ -1669,6 +1737,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let originChanged = currentBounds.origin != lastLayoutBounds.origin
 
         if sizeChanged {
+            cancelSelectionMagnifierTracking()
             processSizeChange(newSize: currentBounds.size)
             updateCursorPosition()
         }
