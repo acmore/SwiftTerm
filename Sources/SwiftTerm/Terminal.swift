@@ -6179,9 +6179,26 @@ open class Terminal {
         return linkMatch(at: location, mode: mode)?.text
     }
 
-    func getDisplayText (start: Position, end: Position) -> String
+    /// Returns text from the buffer currently displayed, using zero-based
+    /// buffer-relative cell positions and an exclusive end position.
+    /// During synchronized output (DEC 2026), this reads the frozen display
+    /// snapshot, matching native selection and link lookup. Use `getText`
+    /// when the caller explicitly needs the live, possibly unfinished frame.
+    public func getDisplayText (start: Position, end: Position) -> String
     {
         getText(start: start, end: end, buffer: displayBuffer)
+    }
+
+    /// Number of cells a displayed buffer row uses, up to its last
+    /// non-blank cell (a wide character counts both cells). Equal to
+    /// `cols` when the row is full to the right edge, which is how a host
+    /// can tell that an application wrapped a line itself with a hard
+    /// newline. Zero for a blank row or a row outside the buffer.
+    public func displayRowWidth (row: Int) -> Int
+    {
+        let lines = displayBuffer.lines
+        guard row >= 0, row < lines.count else { return 0 }
+        return lines [row].getTrimmedLength ()
     }
 
     func linkMatch(at location: LinkLookupLocation, mode: LinkLookupMode) -> LinkMatch?
