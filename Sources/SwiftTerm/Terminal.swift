@@ -5137,7 +5137,7 @@ open class Terminal {
      */
     public func garbageCollectPayload() {
         // stop right away if there is nothing to collect
-        if TinyAtom.lastCollected == TinyAtom.lastUsed {
+        if !TinyAtom.hasUncollected {
             return
         }
         
@@ -5159,15 +5159,7 @@ open class Terminal {
         
         // since we create atoms in order we expect them to run out of use
         // in order as well and stop with first atom that is still in use
-        for code in UInt16(TinyAtom.lastCollected + 1)...UInt16(TinyAtom.lastUsed) {
-            if used.contains(code) {
-                // code still in use
-                break
-            }
-            
-            TinyAtom.lastCollected = Int(code)
-            TinyAtom.release(code: code)
-        }
+        TinyAtom.collect(keeping: used)
     }
     
     /**

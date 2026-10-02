@@ -42,6 +42,30 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(link == "https://example.com")
     }
 
+    /// The atom table is shared by every terminal in the process. Terminals
+    /// fed on different threads used to race on it and crash (Swift
+    /// Testing runs suites in parallel). Each terminal must still read back
+    /// its own links while others create theirs.
+    @Test func testTerminalsOnDifferentThreadsShareTheLinkTableSafely() {
+        let failures = NSLock()
+        nonisolated(unsafe) var mismatches: [String] = []
+        DispatchQueue.concurrentPerform(iterations: 8) { worker in
+            let delegate = LinkLookupTests()
+            let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 40, rows: 4, scrollback: 0))
+            for round in 0..<300 {
+                let url = "https://example.com/\(worker)/\(round)"
+                terminal.feed(text: "\u{1b}[H\u{1b}]8;;\(url)\u{07}link\u{1b}]8;;\u{07}\r\n")
+                let link = terminal.link(at: .buffer(Position(col: 1, row: 0)), mode: .explicitOnly)
+                if link != url {
+                    failures.lock()
+                    mismatches.append("\(worker)/\(round): \(link ?? "nil")")
+                    failures.unlock()
+                }
+            }
+        }
+        #expect(mismatches.isEmpty, "\(mismatches.prefix(5))")
+    }
+
     @Test func testImplicitUrlLookup() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
         terminal.feed(text: "https://example.com tail")

@@ -190,9 +190,12 @@ public struct Attribute: Equatable, Hashable {
 /// it could in theory be changed to be 24 bits without much trouble
 public struct TinyAtom {
     var code: UInt16
-    static var map: [UInt16:Any] = [:]
-    static var lastUsed: Int = 0
-    static var lastCollected: Int = 0
+    /// The table is shared by every `Terminal` in the process, and terminals
+    /// can be driven from different threads, so every access takes the lock.
+    private static let lock = NSLock()
+    private static var map: [UInt16:Any] = [:]
+    private static var lastUsed: Int = 0
+    private static var lastCollected: Int = 0
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
@@ -202,6 +205,8 @@ public struct TinyAtom {
     
     /// Returns the TinyAtom associated with the specified url, or nil if we ran out of space
     public static func lookup (value: Any) -> TinyAtom? {
+        lock.lock()
+        defer { lock.unlock() }
         let next = lastUsed + 1
         if next < UInt16.max {
             map [UInt16 (next)] = value
@@ -212,7 +217,29 @@ public struct TinyAtom {
     }
     
     public static func release(code: UInt16) {
+        lock.lock()
+        defer { lock.unlock() }
         map.removeValue(forKey: code)
+    }
+
+    /// Whether atoms were created since the last collection.
+    static var hasUncollected: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastCollected != lastUsed
+    }
+
+    /// Releases atoms oldest first, stopping at the first one still in
+    /// `used`: they are created in order, so they go out of use in order.
+    static func collect(keeping used: Set<UInt16>) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard lastCollected < lastUsed else { return }
+        for code in UInt16(lastCollected + 1)...UInt16(lastUsed) {
+            if used.contains(code) { break }
+            lastCollected = Int(code)
+            map.removeValue(forKey: code)
+        }
     }
     
     /// Returns the target for the TinyAtom
@@ -221,6 +248,8 @@ public struct TinyAtom {
             if code == 0 {
                 return nil
             }
+            TinyAtom.lock.lock()
+            defer { TinyAtom.lock.unlock() }
             return TinyAtom.map [code]
         }
     }
