@@ -261,6 +261,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             refreshKittyClipboardCapabilities()
         }
     }
+
+    /// Source parity with iOS; the Mac scroll path does not consult these.
+    public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
+    public var viewportFollowResolver: ((TerminalViewportSnapshot) -> Int?)? = nil
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {

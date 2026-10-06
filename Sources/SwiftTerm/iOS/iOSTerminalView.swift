@@ -224,6 +224,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
 
+    public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
+
+    /**
+     * Consulted by `updateScroller()` before it commits a top row. It runs
+     * with the terminal lock held: read the snapshot and the terminal's
+     * plain properties, never call back into the view. Returning a buffer
+     * row overrides `viewportFollowPolicy` for that update; `nil` falls
+     * back to it.
+     */
+    public var viewportFollowResolver: ((TerminalViewportSnapshot) -> Int?)? = nil
+
     /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hover {
         didSet {
@@ -1936,6 +1947,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // updated above so the newly appended rows remain reachable.
         if isTracking || (userScrolling && isDecelerating) {
             return
+        }
+        // A host that pins the viewport (Sigmux's tmux seeds) decides the
+        // top row here; otherwise the policy does.
+        let maxRow = maxDisplayRow(in: displayBuffer)
+        let resolved: Int?
+        if let viewportFollowResolver {
+            let snapshot = TerminalViewportSnapshot(
+                topVisibleRow: displayBuffer.yDisp, maxTopVisibleRow: maxRow,
+                visibleRows: displayBuffer.rows, totalRows: displayBuffer.lines.count,
+                isAlternateBuffer: terminal.isDisplayBufferAlternate)
+            resolved = viewportFollowResolver(snapshot).map { max(0, min($0, maxRow)) }
+        } else {
+            resolved = nil
+        }
+        if let resolved {
+            if displayBuffer.yDisp != resolved {
+                terminal.setViewYDisp(resolved)
+                terminal.refresh(startRow: 0, endRow: terminal.rows)
+            }
+            setManualScrollingLocked(resolved < maxRow, terminal: terminal)
+        } else if viewportFollowPolicy == .preserveUserPosition, !userScrolling, displayBuffer.yDisp < maxRow {
+            setManualScrollingLocked(true, terminal: terminal)
         }
         let rowOffset = CGFloat (displayBuffer.yDisp) * cellDimension.height
         let desiredY = userScrolling ? rowOffset + manualScrollOffsetWithinRow : rowOffset

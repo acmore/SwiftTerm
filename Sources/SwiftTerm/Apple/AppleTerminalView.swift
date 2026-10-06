@@ -285,6 +285,36 @@ final class FrameCaptureCache {
     }
 }
 
+/// How the viewport follows output. `.followCursor` is the stock behaviour;
+/// `.preserveUserPosition` keeps the top visible row where it is while
+/// output arrives (a host re-seeding history behind the user's back).
+public enum TerminalViewportFollowPolicy: Equatable, Sendable {
+    case followCursor
+    case preserveUserPosition
+}
+
+public struct TerminalViewportSnapshot: Equatable, Sendable {
+    public let topVisibleRow: Int
+    public let maxTopVisibleRow: Int
+    public let visibleRows: Int
+    public let totalRows: Int
+    public let isAlternateBuffer: Bool
+
+    public var isAtBottom: Bool {
+        topVisibleRow >= maxTopVisibleRow
+    }
+}
+
+/// What a host is about to feed, so the view can settle the viewport once
+/// the whole batch is in rather than after every chunk.
+public enum TerminalFeedTransactionKind: Equatable, Sendable {
+    case normal
+    /// Scrollback seeded behind the current view: keep the top row.
+    case historySeedPreservingViewport
+    /// The buffer was replaced wholesale: follow the bottom afterwards.
+    case fullReplace
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -1438,6 +1468,53 @@ extension TerminalView {
     }
 
     typealias CellDimension = CGSize
+
+    /// The first buffer row on screen.
+    public var topVisibleRow: Int {
+        withTerminal { $0.displayBuffer.yDisp }
+    }
+
+    /// The largest `topVisibleRow`: the view rests at the bottom there.
+    public var maxTopVisibleRow: Int {
+        withTerminal { terminal in
+            let displayBuffer = terminal.displayBuffer
+            return max(0, displayBuffer.lines.count - displayBuffer.rows)
+        }
+    }
+
+    public var viewportSnapshot: TerminalViewportSnapshot {
+        withTerminal { terminal in
+            let displayBuffer = terminal.displayBuffer
+            return TerminalViewportSnapshot(
+                topVisibleRow: displayBuffer.yDisp,
+                maxTopVisibleRow: max(0, displayBuffer.lines.count - displayBuffer.rows),
+                visibleRows: displayBuffer.rows,
+                totalRows: displayBuffer.lines.count,
+                isAlternateBuffer: terminal.isDisplayBufferAlternate
+            )
+        }
+    }
+
+    /// Scrolls so `row` is the first row on screen (clamped), updating the
+    /// manual-scrolling state the way a user scroll would.
+    public func setTopVisibleRow(_ row: Int, notifyAccessibility: Bool = true) {
+        scrollTo(row: max(0, min(row, maxTopVisibleRow)), notifyAccessibility: notifyAccessibility)
+    }
+
+    /// Runs `body` (which feeds the terminal) and settles the viewport for
+    /// the batch as a whole.
+    public func performFeedTransaction(_ kind: TerminalFeedTransactionKind, _ body: () -> Void) {
+        let previousTopRow = topVisibleRow
+        body()
+        switch kind {
+        case .normal:
+            break
+        case .fullReplace:
+            setTopVisibleRow(maxTopVisibleRow, notifyAccessibility: false)
+        case .historySeedPreservingViewport:
+            setTopVisibleRow(previousTopRow, notifyAccessibility: false)
+        }
+    }
 
     // Reads the viewStateLock-guarded mirror of `terminal.reverseColors`,
     // refreshed synchronously by the colorChanged delegate (which DECSCNM
