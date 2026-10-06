@@ -28,6 +28,18 @@ final class IOSSelectionMenuTests: XCTestCase {
         XCTAssertEqual(fallback?.children.first?.title, "Copy", "without a builder the library menu is unchanged")
     }
 
+    func testHostSelectRangeAnchorsForLineAndBlock() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        view.feed(text: "first row here\r\nsecond row\r\n\r\nafter blank")
+        view.select(from: Position(col: 7, row: 1), to: Position(col: 10, row: 1))
+        XCTAssertEqual(view.selectedText, "row")
+        XCTAssertEqual(view.selectedRowRange, 1...1)
+        view.selectLineAtAnchor()
+        XCTAssertEqual(view.selectedText, "second row", "line selection works around the host-set anchor")
+        view.selectBlockAtAnchor()
+        XCTAssertEqual(view.selectedRowRange, 0...1)
+    }
+
     func testPresentAndDismissFollowTheSelection() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))

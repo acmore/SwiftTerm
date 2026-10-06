@@ -2943,6 +2943,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         onSelectionChanged?()
     }
 
+    /// Selects the cells from `start` up to, not including, `end` (buffer
+    /// coordinates) and anchors there, so Line / Block / All work around it.
+    /// Hosts use it to replace the word a long press picked with the token
+    /// under the finger.
+    public func select(from start: Position, to end: Position) {
+        selection.setSelection(start: start, end: end)
+        selection.selectionMode = .character
+        selection.markAnchor()
+        selectionDidChangeByHost()
+    }
+
     public func selectWordAtAnchor() {
         guard let position = anchorPosition else { return }
         selection.selectWordOrExpression(at: position, in: terminal.displayBuffer)
