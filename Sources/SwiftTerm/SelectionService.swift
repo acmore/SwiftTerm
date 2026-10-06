@@ -356,6 +356,26 @@ public class SelectionService: CustomDebugStringConvertible {
         }
     }
     
+    /// Re-anchors the selection after `lines` rows were trimmed off the front
+    /// of the buffer, so it keeps covering the same text. A selection whose
+    /// end scrolled out of the buffer entirely is cleared.
+    func shiftForTrimmedLines(_ lines: Int) {
+        guard active, lines > 0 else { return }
+        if end.row - lines < 0 && start.row - lines < 0 {
+            selectNone()
+            return
+        }
+        start = Position(col: start.row - lines < 0 ? 0 : start.col, row: max(0, start.row - lines))
+        end = Position(col: end.row - lines < 0 ? 0 : end.col, row: max(0, end.row - lines))
+        if let p = pivot {
+            pivot = Position(col: p.col, row: max(0, p.row - lines))
+        }
+        if let a = anchor {
+            anchor = (Position(col: a.start.col, row: max(0, a.start.row - lines)),
+                      Position(col: a.end.col, row: max(0, a.end.row - lines)))
+        }
+    }
+
     // MARK: Structured selection (touch hosts)
 
     /// Normalized selected buffer rows, nil when nothing is selected.

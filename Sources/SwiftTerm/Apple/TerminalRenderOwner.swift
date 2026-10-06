@@ -266,8 +266,17 @@ final class TerminalRenderOwner: Sendable {
         let result = terminal.terminalLock.withLock {
             session.search.invalidate()
             let selectedContent = session.selection.captureSelectedContent()
+            // Rows the selection indexes move when a full scrollback drops
+            // lines off the front; re-anchor so a touch selection survives
+            // streaming output (spinners, status clocks) instead of being
+            // read as "the text changed".
+            let buffer = terminal.buffer
+            let trimmedBefore = buffer.lines.trimmedCount
             body(terminal)
             if let selectedContent {
+                if terminal.buffer === buffer {
+                    session.selection.shiftForTrimmedLines(buffer.lines.trimmedCount - trimmedBefore)
+                }
                 session.selection.clearIfSelectedContentChanged(from: selectedContent)
             }
             return (
