@@ -31,8 +31,13 @@ final class IOSSelectionMagnifierTests: XCTestCase {
 
     private func make() -> (UIWindow, TerminalView, Recorder) {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let root = UIViewController()
+        window.rootViewController = root
+        // The root view joins the window only once the window is shown.
+        window.isHidden = false
+        root.view.frame = window.bounds
         let view = TerminalView(frame: CGRect(x: 0, y: 80, width: 390, height: 600))
-        window.addSubview(view)
+        root.view.addSubview(view)
         view.longPressSelectsWord = true
         view.showsSelectionEditMenu = false
         view.feed(text: (0..<80).map { "row \($0) abcdefghijklmnopqrstuvwxyz" }.joined(separator: "\r\n"))
@@ -48,8 +53,9 @@ final class IOSSelectionMagnifierTests: XCTestCase {
     }
 
     /// The last caret the loupe was moved to, in the terminal view's space.
+    /// The loupe is hosted in the root view controller's view.
     private func lastCaret(_ recorder: Recorder, in view: TerminalView, _ window: UIWindow) throws -> CGRect {
-        window.convert(try XCTUnwrap(recorder.moves.last).1, to: view)
+        try XCTUnwrap(window.rootViewController?.view).convert(try XCTUnwrap(recorder.moves.last).1, to: view)
     }
 
     func testLongPressMagnifiesSelectedWordWithoutChangingGeometryOrFocus() throws {
@@ -152,7 +158,7 @@ final class IOSSelectionMagnifierTests: XCTestCase {
         XCTAssertEqual(recorder.invalidations, 1)
     }
 
-    func testLoupeIsHostedInTheWindowSoEdgeSamplesAreNotClipped() throws {
+    func testLoupeIsHostedInTheRootViewSoEdgeSamplesAreNotClipped() throws {
         let (window, view, recorder) = make()
         defer { window.isHidden = true }
         view.showsSelectionMagnifier = true
@@ -161,15 +167,16 @@ final class IOSSelectionMagnifierTests: XCTestCase {
         pan.origin = CGPoint(x: 20 * view.cellDimension.width, y: 13 * view.cellDimension.height + 6)
         pan.point = pan.origin
         view.panSelectionHandler(pan)
-        XCTAssertTrue(recorder.hosts.last === window, "the loupe samples the window, which nothing clips")
+        let root = try XCTUnwrap(window.rootViewController?.view)
+        XCTAssertTrue(recorder.hosts.last === root, "the loupe samples the root view, which nothing clips; a UIWindow host shows no loupe")
         // The finger drags past the right edge and below the terminal onto a
         // key bar: the loupe keeps following, with its caret on screen.
         pan.phase = .changed
         pan.point = CGPoint(x: view.bounds.width + 30, y: view.bounds.height + 20)
         view.panSelectionHandler(pan)
         let move = try XCTUnwrap(recorder.moves.last)
-        XCTAssertEqual(move.0, view.convert(pan.point, to: window))
-        XCTAssertTrue(window.bounds.contains(move.1))
+        XCTAssertEqual(move.0, view.convert(pan.point, to: root))
+        XCTAssertTrue(root.bounds.contains(move.1))
         XCTAssertEqual(recorder.invalidations, 0, "leaving the view must not dismiss the loupe")
         pan.phase = .cancelled
         view.panSelectionHandler(pan)

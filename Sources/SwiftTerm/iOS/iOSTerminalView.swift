@@ -1136,14 +1136,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                            y: min(max(CGFloat(position.row) * cellDimension.height, bounds.minY),
                                   max(bounds.minY, bounds.maxY - cellDimension.height)),
                            width: 1, height: cellDimension.height)
-        // The loupe lives in the window, not in this scroll view: UIKit clips
-        // its sample to the hosting view, so a session begun here went blank
-        // whenever the finger reached the left or right edge of the terminal
-        // or slid off it onto a key bar.
-        let hostTouch = convert(touch, to: window)
-        let hostCaret = convert(caret, to: window)
+        // The loupe lives in the root view controller's view, not in this
+        // scroll view: UIKit clips its sample to the hosting view, so a
+        // session begun here went blank whenever the finger reached the left
+        // or right edge of the terminal or slid off it onto a key bar. The
+        // window itself is not accepted as a host (no loupe at all).
+        let host: UIView = window.rootViewController?.view ?? window
+        let hostTouch = convert(touch, to: host)
+        let hostCaret = convert(caret, to: host)
         if selectionMagnifier == nil {
-            selectionMagnifier = makeSelectionMagnifier(CGPoint(x: hostCaret.midX, y: hostCaret.midY), window)
+            selectionMagnifier = makeSelectionMagnifier(CGPoint(x: hostCaret.midX, y: hostCaret.midY), host)
         }
         selectionMagnifier?.move(hostTouch, hostCaret)
     }
