@@ -176,6 +176,10 @@ final class TerminalRenderOwner: Sendable {
         synchronizedOutputWatchdog.invalidate()
     }
 
+    /// See `TerminalView.clearsSelectionOnContentChange`. Read on the feed
+    /// path under the terminal lock, written from the main actor.
+    let clearsSelectionOnContentChange = Locked(true)
+
     @MainActor
     func attach (terminal: Terminal, selection: SelectionService,
                  search: SearchService) {
@@ -277,7 +281,11 @@ final class TerminalRenderOwner: Sendable {
                 if terminal.buffer === buffer {
                     session.selection.shiftForTrimmedLines(buffer.lines.trimmedCount - trimmedBefore)
                 }
-                session.selection.clearIfSelectedContentChanged(from: selectedContent)
+                if clearsSelectionOnContentChange.withLock({ $0 }) {
+                    session.selection.clearIfSelectedContentChanged(from: selectedContent)
+                } else if terminal.displayBuffer !== selectedContent.buffer {
+                    session.selection.selectNone()
+                }
             }
             return (
                 active: terminal.synchronizedOutputActive,
