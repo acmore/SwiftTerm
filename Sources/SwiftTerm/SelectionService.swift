@@ -181,7 +181,7 @@ public class SelectionService: CustomDebugStringConvertible {
         guard let rows = selectedContentRows (in: buffer) else {
             return nil
         }
-        return SelectedContentSnapshot (buffer: buffer, rows: rows)
+        return SelectedContentSnapshot (buffer: terminal.displayBufferIdentity, rows: rows)
     }
 
     /// Clears the selection when a feed changed its buffer or selected cells.
@@ -191,7 +191,7 @@ public class SelectionService: CustomDebugStringConvertible {
             return
         }
         let buffer = terminal.displayBuffer
-        guard buffer === snapshot.buffer,
+        guard terminal.displayBufferIdentity === snapshot.buffer,
               selectedContentRows (in: buffer) == snapshot.rows else {
             selectNone ()
             return

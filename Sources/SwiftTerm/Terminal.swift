@@ -547,6 +547,12 @@ open class Terminal {
     /// within the absolute row range `top...bottom`.
     func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
     {
+        if let source = synchronizedDisplaySource {
+            if source === buffer {
+                synchronizedSelectionChanges.append(.scroll(top, bottom, lines))
+            }
+            return
+        }
         // Hot path: every scrolled line lands here. An inactive selection would
         // return immediately from `adjustForInPlaceScroll` anyway, so the whole
         // walk is skippable when nothing is selected.
@@ -563,6 +569,12 @@ open class Terminal {
     /// within the columns `left...right` (margin mode).
     func selectionsInvalidateForColumnRestrictedScroll (top: Int, bottom: Int, left: Int, right: Int)
     {
+        if let source = synchronizedDisplaySource {
+            if source === buffer {
+                synchronizedSelectionChanges.append(.columns(top, bottom, left, right))
+            }
+            return
+        }
         guard activeSelectionCount > 0 else {
             return
         }
@@ -617,12 +629,28 @@ open class Terminal {
 #endif
     private(set) var synchronizedOutputWatchdogCounters = SynchronizedOutputWatchdogCounters()
 
+    /// Preserve the display text used by selection and link hit-testing while
+    /// DEC 2026 holds the rendered frame. Set before feeding the terminal.
+    /// Opt-in because retaining scrollback for a sync window costs a buffer copy.
+    public var freezesDisplayBufferDuringSynchronizedOutput = false
+    private var synchronizedDisplayBuffer: Buffer?
+    private var synchronizedDisplaySource: Buffer?
+    private var synchronizedDisplayIsAlternate = false
+    private enum SynchronizedSelectionChange {
+        case scroll(Int, Int, Int), columns(Int, Int, Int, Int)
+    }
+    private var synchronizedSelectionChanges: [SynchronizedSelectionChange] = []
+
+    // A frozen copy belongs to the same logical screen as its source. Selection
+    // persistence must not mistake entering/leaving a sync window for a switch.
+    var displayBufferIdentity: Buffer { synchronizedDisplaySource ?? buffer }
+
     var displayBuffer: Buffer {
-        buffer
+        synchronizedDisplayBuffer ?? buffer
     }
 
     var isDisplayBufferAlternate: Bool {
-        isCurrentBufferAlternate
+        synchronizedDisplayBuffer == nil ? isCurrentBufferAlternate : synchronizedDisplayIsAlternate
     }
     
     public var isCurrentBufferAlternate: Bool {
@@ -8443,10 +8471,16 @@ open class Terminal {
 
     // Mirrors ghostty: flip a flag and record a watchdog update. The view layer
     // pauses rendering while the flag is set (see updateDisplay's early-return).
-    // The live buffer is mutated normally; no snapshot is taken.
+    // The live buffer is mutated normally. Hosts may opt into a separate frozen
+    // buffer for interaction reads, matching the frame held by the renderer.
     private func beginSynchronizedOutput ()
     {
         let wasActive = synchronizedOutputActive
+        if !wasActive, freezesDisplayBufferDuringSynchronizedOutput {
+            synchronizedDisplayBuffer = snapshotDisplayBuffer(buffer)
+            synchronizedDisplaySource = buffer
+            synchronizedDisplayIsAlternate = isCurrentBufferAlternate
+        }
         synchronizedOutputActive = true
         synchronizedOutputGeneration &+= 1
         synchronizedOutputWatchdogDirty = true
@@ -8464,6 +8498,29 @@ open class Terminal {
             return
         }
         synchronizedOutputActive = false
+        let displayedSource = synchronizedDisplaySource
+        synchronizedDisplayBuffer = nil
+        synchronizedDisplaySource = nil
+        // Apply deferred anchor movement only when the new frame is released,
+        // including watchdog expiry (which does not go through a feed transaction).
+        if let displayedSource {
+            let currentSelections = selections
+            if displayedSource === buffer {
+                for change in synchronizedSelectionChanges {
+                    for entry in currentSelections {
+                        switch change {
+                        case .scroll(let top, let bottom, let lines):
+                            entry.value.adjustForInPlaceScroll(top: top, bottom: bottom, lines: lines)
+                        case .columns(let top, let bottom, let left, let right):
+                            entry.value.invalidateForColumnRestrictedScroll(top: top, bottom: bottom, left: left, right: right)
+                        }
+                    }
+                }
+            } else {
+                for entry in currentSelections { entry.value.selectNone() }
+            }
+        }
+        synchronizedSelectionChanges.removeAll(keepingCapacity: true)
         synchronizedOutputWatchdogDirty = true
         refresh (startRow: 0, endRow: rows - 1)
         tdel?.synchronizedOutputChanged(source: self, active: false)
@@ -8575,6 +8632,30 @@ open class Terminal {
     func setViewYDisp (_ newValue: Int)
     {
         buffer.yDisp = newValue
+        synchronizedDisplayBuffer?.yDisp = newValue
+    }
+
+    private func snapshotDisplayBuffer(_ source: Buffer) -> Buffer {
+        // BufferLine's copy retains packed-cell payloads in their original arena;
+        // later live rewrites can release their cells without invalidating ours.
+        let copy = Buffer(cols: source.cols, rows: source.rows,
+                          tabStopWidth: tabStopWidth, scrollback: source.scrollback,
+                          arena: source.cellArena)
+        copy.xDisp = source.xDisp
+        copy.yDisp = source.yDisp
+        copy.xBase = source.xBase
+        copy.yBase = source.yBase
+        copy.linesTop = source.linesTop
+        copy.x = source.x
+        copy.y = source.y
+        copy.scrollTop = source.scrollTop
+        copy.scrollBottom = source.scrollBottom
+        copy.marginLeft = source.marginLeft
+        copy.marginRight = source.marginRight
+        for row in 0..<source.lines.count {
+            copy.lines.push(BufferLine(from: source.lines[row]))
+        }
+        return copy
     }
 
     /**

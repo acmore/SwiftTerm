@@ -51,6 +51,44 @@ struct TerminalViewSelectionPolicyTests {
         #expect(!view.selectionActive)
     }
 
+    @Test func frozenDisplayKeepsSelectionAcrossSeparateFeedTransactions() {
+        for clearsOnChange in [false, true] {
+            let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+            view.withTerminal { $0.freezesDisplayBufferDuringSynchronizedOutput = true }
+            view.clearsSelectionOnContentChange = clearsOnChange
+            view.feed(text: "\u{1b}[?1049hsrc/original.swift:8")
+            view.selectAll(nil)
+            view.feed(text: "\u{1b}[?2026h\u{1b}[H\u{1b}[2Ksrc/replaced.swift:9")
+            #expect(view.selectionActive)
+            #expect(view.getSelection()?.contains("original") == true)
+            view.feed(text: "\u{1b}[?2026l")
+            #expect(view.selectionActive == !clearsOnChange)
+            if !clearsOnChange {
+                #expect(view.getSelection()?.contains("replaced") == true)
+            }
+        }
+    }
+
+    @Test func frozenScrollbackTrimIsNotAppliedTwiceByFeedTransaction() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        view.resize(cols: 40, rows: 5)
+        view.withTerminal {
+            $0.changeHistorySize(2)
+            $0.freezesDisplayBufferDuringSynchronizedOutput = true
+        }
+        view.clearsSelectionOnContentChange = false
+        view.feed(text: "0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6")
+        view.withTerminal { _ in view.selection.selectRows(4...4) }
+        view.feed(text: "\u{1b}[?2026h\r\n7\r\n8")
+        #expect(view.withTerminal { _ in view.selection.selectedRows } == 4...4)
+        view.feed(text: "\u{1b}[?2026l")
+        #expect(view.withTerminal { _ in view.selection.selectedRows } == 2...2)
+        #expect(view.getSelection()?.trimmingCharacters(in: .whitespacesAndNewlines) == "4")
+        view.feed(text: "\r\n9")
+        #expect(view.withTerminal { _ in view.selection.selectedRows } == 1...1)
+        #expect(view.getSelection()?.trimmingCharacters(in: .whitespacesAndNewlines) == "4")
+    }
+
     @Test func handleScrollDeliversWheelBytesBeforeReturning() {
         let view = TerminalView(frame: .zero)
         let delegate = Delegate()
