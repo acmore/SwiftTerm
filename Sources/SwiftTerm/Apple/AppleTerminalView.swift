@@ -1469,6 +1469,19 @@ extension TerminalView {
 
     typealias CellDimension = CGSize
 
+    /// The terminal this view renders. Hosts that drive the terminal from
+    /// the main thread (feeding through this view) can read it directly;
+    /// anything that may race a feed goes through `withTerminalLocked`.
+    public func getTerminal() -> Terminal {
+        terminal
+    }
+
+    /// Runs `body` with the terminal lock held, the way the view's own
+    /// code reads and changes terminal state.
+    public func withTerminalLocked<T>(_ body: (Terminal) throws -> T) rethrows -> T {
+        try withTerminal(body)
+    }
+
     /// The first buffer row on screen.
     public var topVisibleRow: Int {
         withTerminal { $0.displayBuffer.yDisp }
