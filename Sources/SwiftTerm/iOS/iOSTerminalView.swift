@@ -2948,7 +2948,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Hosts use it to replace the word a long press picked with the token
     /// under the finger.
     public func select(from start: Position, to end: Position) {
-        selection.setSelection(start: start, end: end)
+        selection.setSelectionBetweenBoundaries(start: start, end: end)
         selection.selectionMode = .character
         selection.markAnchor()
         selectionDidChangeByHost()

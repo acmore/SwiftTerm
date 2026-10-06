@@ -54,5 +54,17 @@ final class IOSSelectionMenuTests: XCTestCase {
         view.dismissSelectionMenu()
         XCTAssertTrue(view.selectionActive, "dismissing the menu keeps the selection")
     }
+
+    func testHostRangeIncludesTheLastCellWithoutSelectingTheNextRow() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let cols = view.getTerminal().cols
+        let text = String(repeating: "x", count: cols - 2) + "中"
+        view.feed(text: text + "\r\nnext row")
+        view.select(from: Position(col: 0, row: 0), to: Position(col: cols, row: 0))
+        XCTAssertEqual(view.selectedText, text)
+        XCTAssertEqual(view.selectedRowRange, 0...0)
+        view.select(from: Position(col: cols - 2, row: 0), to: Position(col: cols, row: 0))
+        XCTAssertEqual(view.selectedText, "中")
+    }
 }
 #endif

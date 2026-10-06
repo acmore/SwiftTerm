@@ -261,6 +261,20 @@ class SelectionService: CustomDebugStringConvertible {
         
         setActiveAndNotify()
     }
+
+    /// Host ranges use boundaries between cells. In particular, `cols` is
+    /// the valid exclusive boundary after the last glyph, not an invalid
+    /// cell coordinate to clamp to `cols - 1`.
+    func setSelectionBetweenBoundaries(start: Position, end: Position) {
+        let buffer = terminal.displayBuffer
+        func boundary(_ position: Position) -> Position {
+            Position(col: max(0, min(position.col, buffer.cols)),
+                     row: max(0, min(position.row, buffer.lines.count - 1)))
+        }
+        self.start = boundary(start)
+        self.end = boundary(end)
+        setActiveAndNotify()
+    }
     
     /**
      * Starts selection, the range is determined by the last start position
