@@ -253,6 +253,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
 
+    // MARK: Host hooks
+    //
+    // The terminal's delegate events arrive off the main thread and are
+    // marshalled here; these fire on the main thread after the view's own
+    // handling, so a subclass can react without re-implementing it.
+
+    /// The terminal switched between its normal and alternate screen.
+    open func terminalDidActivateBuffer() {}
+    /// Mouse tracking was turned on or off by the program.
+    open func terminalMouseModeDidChange() {}
+    /// The terminal was resized (`sizeChanged`).
+    open func terminalSizeDidChange() {}
+    /// The viewport row changed after a feed (output scrolled the view).
+    open func terminalViewportDidScroll() {}
+
+    /// A one-finger pan reports wheel events to a mouse-tracking program.
+    /// Hosts that route mouse input themselves turn it off.
+    public var installsProgramScrollGesture: Bool = true {
+        didSet { if terminal != nil { refreshProgramScrollGesture() } }
+    }
+
     /**
      * Consulted by `updateScroller()` before it commits a top row. It runs
      * with the terminal lock held: read the snapshot and the terminal's
@@ -3727,6 +3748,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             resetManualScrollTracking()
             updateScroller()
             refreshProgramScrollGesture()
+            terminalDidActivateBuffer()
         case .mouseModeChanged:
             // iOS has no tracking-area equivalent to update.
             break
@@ -3923,6 +3945,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         onMain { [weak self] in
             guard let self else { return }
             self.refreshProgramScrollGesture(mouseMode: mouseMode)
+            self.terminalMouseModeDidChange()
         }
     }
 
@@ -3933,7 +3956,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 mouseTracking: (mouseMode ?? terminal.mouseMode) != .off,
                 alternateBuffer: terminal.isDisplayBufferAlternate)
         }
-        if capturesProgramScroll {
+        if capturesProgramScroll && installsProgramScrollGesture {
             enableMousePanGesture()
         } else {
             disableMousePanGesture()
@@ -3955,6 +3978,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             guard let self else { return }
             self.terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
             self.updateScroller()
+            self.terminalSizeDidChange()
         }
     }
   

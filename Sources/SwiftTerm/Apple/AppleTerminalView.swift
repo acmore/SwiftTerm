@@ -3945,6 +3945,7 @@ extension TerminalView {
         if consumeScrolledDirty() {
             updateScroller()
             terminalDelegate?.scrolled(source: self, position: effects.scrollPosition)
+            terminalViewportDidScroll()
         }
         updateDebugDisplay()
     }

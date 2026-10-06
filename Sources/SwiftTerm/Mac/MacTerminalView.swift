@@ -265,6 +265,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Source parity with iOS; the Mac scroll path does not consult these.
     public var viewportFollowPolicy: TerminalViewportFollowPolicy = .followCursor
     public var viewportFollowResolver: ((TerminalViewportSnapshot) -> Int?)? = nil
+
+    /// Main-thread host hooks; see the iOS view. No-ops on macOS.
+    open func terminalDidActivateBuffer() {}
+    open func terminalMouseModeDidChange() {}
+    open func terminalSizeDidChange() {}
+    open func terminalViewportDidScroll() {}
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {
