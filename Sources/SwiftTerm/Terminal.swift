@@ -387,6 +387,7 @@ public struct TerminalModeSnapshot: Equatable {
     public let isMouseReportingEnabled: Bool
     public let mouseMode: Terminal.MouseMode
     public let mouseProtocol: TerminalMouseProtocol
+    public let isAlternateScrollModeEnabled: Bool
     public let isBracketedPasteEnabled: Bool
     public let isApplicationCursorEnabled: Bool
     public let isApplicationKeypadEnabled: Bool
@@ -1116,6 +1117,7 @@ open class Terminal {
             isMouseReportingEnabled: mouseMode != .off,
             mouseMode: mouseMode,
             mouseProtocol: currentMouseProtocol,
+            isAlternateScrollModeEnabled: alternateScrollMode,
             isBracketedPasteEnabled: bracketedPasteMode,
             isApplicationCursorEnabled: applicationCursor,
             isApplicationKeypadEnabled: applicationKeypad,

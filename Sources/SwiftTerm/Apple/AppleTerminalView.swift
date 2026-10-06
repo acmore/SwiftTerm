@@ -315,6 +315,14 @@ public enum TerminalFeedTransactionKind: Equatable, Sendable {
     case fullReplace
 }
 
+/// What `handleScroll` did with a scroll request.
+public enum TerminalScrollAction: Equatable, Sendable {
+    case localViewport(lines: Int, topVisibleRow: Int)
+    case mouseWheel(lines: Int)
+    case alternateScrollKeys(lines: Int)
+    case ignored
+}
+
 /// A rendered fragment that starts at a specific column and contains a run of
 /// characters that all occupy the same number of columns.
 struct ViewLineSegment {
@@ -1512,6 +1520,48 @@ extension TerminalView {
     /// manual-scrolling state the way a user scroll would.
     public func setTopVisibleRow(_ row: Int, notifyAccessibility: Bool = true) {
         scrollTo(row: max(0, min(row, maxTopVisibleRow)), notifyAccessibility: notifyAccessibility)
+    }
+
+    /// Routes a scroll of `lines` rows (positive = up) the way the program
+    /// expects: wheel reports while it tracks the mouse, cursor keys on an
+    /// alternate screen that asked for them, local scrollback otherwise.
+    public func handleScroll(lines: Int, x: Int, y: Int, pixelX: Int? = nil, pixelY: Int? = nil) -> TerminalScrollAction {
+        guard lines != 0 else { return .ignored }
+        let count = abs(lines)
+        let routed: TerminalScrollAction? = withTerminal { terminal in
+            let mode = terminal.modeSnapshot
+            if mode.isMouseReportingEnabled {
+                let direction: MouseWheelDirection = lines > 0 ? .up : .down
+                for _ in 0..<count {
+                    terminal.sendMouseWheel(direction, x: x, y: y, pixelX: pixelX ?? x, pixelY: pixelY ?? y)
+                }
+                return .mouseWheel(lines: lines)
+            }
+            if mode.isAlternateBuffer {
+                return mode.isAlternateScrollModeEnabled ? .alternateScrollKeys(lines: lines) : .ignored
+            }
+            return nil
+        }
+        switch routed {
+        case .some(.alternateScrollKeys):
+            for _ in 0..<count {
+                if lines > 0 { sendKeyUp() } else { sendKeyDown() }
+            }
+            return routed!
+        case .some(let action):
+            return action
+        case .none:
+            break
+        }
+        guard maxTopVisibleRow > 0 else { return .ignored }
+        if lines > 0 { scrollUp(lines: count) } else { scrollDown(lines: count) }
+        return .localViewport(lines: lines, topVisibleRow: topVisibleRow)
+    }
+
+    /// Re-runs the view's scroller sync (content size and offset against the
+    /// terminal's viewport) outside a frame, for hosts that just fed output.
+    public func refreshViewport() {
+        updateScroller()
     }
 
     /// Runs `body` (which feeds the terminal) and settles the viewport for
