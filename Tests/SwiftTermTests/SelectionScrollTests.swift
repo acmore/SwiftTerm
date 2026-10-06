@@ -107,10 +107,11 @@ final class SelectionScrollTests: XCTestCase {
     }
 
     /// Full-screen scrolls push lines into the scrollback and advance yDisp, so
-    /// absolute rows stay valid and no translation should happen.
+    /// absolute rows stay valid and no translation should happen. The normal
+    /// buffer is used: the alternate buffer has no scrollback here, so a
+    /// full-screen scroll there shifts lines in place instead.
     func testFullScreenScrollLeavesSelectionAlone () {
         let terminal = makeTerminal ()
-        terminal.feed (text: "\u{1b}[?1049h")
         paintLines (terminal, count: 9)
 
         let selection = SelectionService (terminal: terminal)

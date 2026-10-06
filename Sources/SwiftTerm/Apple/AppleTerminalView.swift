@@ -1490,6 +1490,19 @@ extension TerminalView {
         try withTerminal(body)
     }
 
+    /// Whether a feed that rewrites the selected cells clears the selection.
+    ///
+    /// On by default: a selection whose text changed under it no longer
+    /// describes what the user picked. Hosts that show streaming program
+    /// output (agent TUIs repainting spinners, status clocks) can turn this
+    /// off so a touch selection stays until the user dismisses it; the
+    /// selection then keeps its rows and reads whatever those rows hold.
+    /// Switching between the normal and alternate buffers still clears it.
+    public var clearsSelectionOnContentChange: Bool {
+        get { renderOwner.clearsSelectionOnContentChange.withLock { $0 } }
+        set { renderOwner.clearsSelectionOnContentChange.withLock { $0 = newValue } }
+    }
+
     /// The first buffer row on screen.
     public var topVisibleRow: Int {
         withTerminal { $0.displayBuffer.yDisp }
@@ -1528,30 +1541,37 @@ extension TerminalView {
     public func handleScroll(lines: Int, x: Int, y: Int, pixelX: Int? = nil, pixelY: Int? = nil) -> TerminalScrollAction {
         guard lines != 0 else { return .ignored }
         let count = abs(lines)
-        let routed: TerminalScrollAction? = withTerminal { terminal in
+        // Decide under the lock, send outside it: delegate sends made while
+        // the terminal lock is held are deferred, and callers expect the
+        // wheel bytes to be on their way when this returns.
+        let routed: (action: TerminalScrollAction, bytes: [UInt8])? = withTerminal { terminal in
             let mode = terminal.modeSnapshot
             if mode.isMouseReportingEnabled {
                 let direction: MouseWheelDirection = lines > 0 ? .up : .down
+                var bytes: [UInt8] = []
                 for _ in 0..<count {
-                    terminal.sendMouseWheel(direction, x: x, y: y, pixelX: pixelX ?? x, pixelY: pixelY ?? y)
+                    bytes += terminal.mouseWheelBytes(
+                        direction: direction, x: x, y: y, pixelX: pixelX ?? x, pixelY: pixelY ?? y)
                 }
-                return .mouseWheel(lines: lines)
+                return (.mouseWheel(lines: lines), bytes)
             }
             if mode.isAlternateBuffer {
-                return mode.isAlternateScrollModeEnabled ? .alternateScrollKeys(lines: lines) : .ignored
+                return (mode.isAlternateScrollModeEnabled ? .alternateScrollKeys(lines: lines) : .ignored, [])
             }
             return nil
         }
-        switch routed {
-        case .some(.alternateScrollKeys):
-            for _ in 0..<count {
-                if lines > 0 { sendKeyUp() } else { sendKeyDown() }
+        if let routed {
+            switch routed.action {
+            case .alternateScrollKeys:
+                for _ in 0..<count {
+                    if lines > 0 { sendKeyUp() } else { sendKeyDown() }
+                }
+            case .mouseWheel:
+                if !routed.bytes.isEmpty { send(data: routed.bytes[...]) }
+            default:
+                break
             }
-            return routed!
-        case .some(let action):
-            return action
-        case .none:
-            break
+            return routed.action
         }
         guard maxTopVisibleRow > 0 else { return .ignored }
         if lines > 0 { scrollUp(lines: count) } else { scrollDown(lines: count) }

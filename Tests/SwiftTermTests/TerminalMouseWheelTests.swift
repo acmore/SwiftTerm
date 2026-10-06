@@ -46,7 +46,8 @@ final class TerminalMouseWheelTests {
 
         terminal.sendMouseWheel(.up, x: 12, y: 5, pixelX: 120, pixelY: 50)
 
-        #expect(sentString(delegate) == "\(esc)[<64;120;50M")
+        // Pixel coordinates are reported 1-based, like cell coordinates.
+        #expect(sentString(delegate) == "\(esc)[<64;121;51M")
     }
 
     private func sentString(_ delegate: TerminalTestDelegate) -> String {
