@@ -711,8 +711,38 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
              }
              return
          }
-         if gestureRecognizer.state == .changed, let anchor = longPressMagnifierAnchor {
-             updateSelectionMagnifier(at: gestureRecognizer.location(in: self), position: anchor)
+         if gestureRecognizer.state == .changed, longPressMagnifierAnchor != nil {
+             let point = gestureRecognizer.location(in: self)
+             guard longPressSelectsWord, selection.active else {
+                 updateSelectionMagnifier(at: point, position: longPressMagnifierAnchor ?? calculateTapHit(point: point).grid)
+                 return
+             }
+             // As in Safari: keep holding and drag, and the selection grows
+             // from the word to the finger. The anchor is the word (or what
+             // the host replaced it with); the end nearer the finger moves,
+             // the other end is the pivot. Back inside the anchor, the
+             // selection is the anchor again.
+             let hit = calculateTapHit(point: point).grid
+             let anchor = selection.anchor ?? (start: selection.start, end: selection.end)
+             let moving: Position
+             if Position.compare(hit, anchor.start) == .before {
+                 selection.pivot = anchor.end
+                 selection.pivotExtend(bufferPosition: hit)
+                 moving = selection.start
+             } else if Position.compare(hit, anchor.end) != .before {
+                 selection.pivot = anchor.start
+                 // The cell under the finger is included: the boundary sits after it.
+                 selection.pivotExtend(bufferPosition: Position(col: min(hit.col + 1, terminal.cols), row: hit.row))
+                 moving = selection.end
+             } else {
+                 // Inside the anchor (a jitter): the word, with the loupe
+                 // still on the cell that was pressed.
+                 selection.setSelection(start: anchor.start, end: anchor.end)
+                 moving = longPressMagnifierAnchor ?? hit
+             }
+             queuePendingDisplay()
+             onSelectionChanged?()
+             updateSelectionMagnifier(at: point, position: moving)
              return
          }
          if gestureRecognizer.state == .began && longPressSelectsWord {

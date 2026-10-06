@@ -183,6 +183,46 @@ final class IOSSelectionMagnifierTests: XCTestCase {
         XCTAssertEqual(recorder.invalidations, 1)
     }
 
+    func testHoldingAndDraggingGrowsTheSelectionFromTheWordToTheFinger() throws {
+        let (window, view, recorder) = make()
+        defer { window.isHidden = true }
+        view.showsSelectionMagnifier = true
+        let w = view.cellDimension.width, h = view.cellDimension.height
+        // row 10 reads "row 10 abcdefghijklmnopqrstuvwxyz": "10" spans cols 4..<6.
+        let press = Press()
+        press.point = CGPoint(x: 4.5 * w, y: 10.5 * h)
+        view.longPress(press)
+        XCTAssertEqual(view.selectedText, "10")
+
+        // Drag right along the row: the end follows the finger, the start stays.
+        press.phase = .changed
+        press.point = CGPoint(x: 9.5 * w, y: 10.5 * h)
+        view.longPress(press)
+        XCTAssertEqual(view.selectedText, "10 abc")
+        XCTAssertEqual(try lastCaret(recorder, in: view, window).minX, 10 * w, accuracy: 0.01, "the loupe tracks the moving end")
+
+        // Down a row: whole rows in between.
+        press.point = CGPoint(x: 2.5 * w, y: 11.5 * h)
+        view.longPress(press)
+        XCTAssertEqual(view.selectedText, "10 abcdefghijklmnopqrstuvwxyz\nrow")
+
+        // Back before the word: the start moves and the end returns to the word's end.
+        press.point = CGPoint(x: 0.5 * w, y: 10.5 * h)
+        view.longPress(press)
+        XCTAssertEqual(view.selectedText, "row 10")
+        XCTAssertEqual(try lastCaret(recorder, in: view, window).minX, 0, accuracy: 0.01)
+
+        // Back inside the word: just the word.
+        press.point = CGPoint(x: 5.5 * w, y: 10.5 * h)
+        view.longPress(press)
+        XCTAssertEqual(view.selectedText, "10")
+
+        press.phase = .ended
+        view.longPress(press)
+        XCTAssertEqual(recorder.invalidations, 1)
+        XCTAssertEqual(view.selectedText, "10", "release keeps what was dragged")
+    }
+
     func testLongPressShowsTheMenuOnReleaseNotOnTouchDown() {
         let (window, view, _) = make()
         defer { window.isHidden = true }
