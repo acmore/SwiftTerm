@@ -367,6 +367,8 @@ struct SynchronizedOutputWatchdogCounters {
     var rearmed = 0
     var cancelled = 0
     var fired = 0
+}
+
 public enum TerminalMouseProtocol: Equatable {
     case x10
     case utf8
@@ -8841,45 +8843,6 @@ open class Terminal {
         return (press, release)
     }
     
-    /**
-     * Returns the wire bytes that `sendEvent(buttonFlags:x:y:pixelX:pixelY:)`
-     * would emit in the current `mouseProtocol`. Pure function — does not
-     * invoke the terminal delegate. Useful for callers that route mouse
-     * input through their own transport (e.g. an SSH multiplexer wrapper)
-     * instead of the terminal's own response channel.
-     */
-    public func eventBytes (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int) -> [UInt8]
-    {
-        var buffer: [UInt8] = []
-        buffer.append(contentsOf: cc.CSI)
-        switch mouseProtocol {
-        case .x10:
-            let encodedButtonFlags = UInt8(clamping: buttonFlags + 32)
-            let encodedX = UInt8(32 + min(max(0, x), Terminal.maximumX10MouseCoordinate) + 1)
-            let encodedY = UInt8(32 + min(max(0, y), Terminal.maximumX10MouseCoordinate) + 1)
-            buffer.append(UInt8(ascii: "M"))
-            buffer.append(encodedButtonFlags)
-            buffer.append(encodedX)
-            buffer.append(encodedY)
-        case .sgr:
-            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
-            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            buffer.append(contentsOf: [UInt8]("<\(bflags);\(x+1);\(y+1)\(m)".utf8))
-        case .sgrPixel:
-            let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
-            let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            buffer.append(contentsOf: [UInt8]("<\(bflags);\(pixelX);\(pixelY)\(m)".utf8))
-        case .urxvt:
-            buffer.append(contentsOf: [UInt8]("\(buttonFlags+32);\(x+1);\(y+1)M".utf8))
-        case .utf8:
-            buffer.append(UInt8(ascii: "M"))
-            encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
-            encodeMouseUtf(data: &buffer, ch: x+33)
-            encodeMouseUtf(data: &buffer, ch: y+33)
-        }
-        return buffer
-    }
-
     /**
      * Sends a mouse event for a specific button at the specific location
      * - Parameter buttonFlags: Cb flags, or the complete result of `encodeButton`.
