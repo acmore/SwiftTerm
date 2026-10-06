@@ -165,6 +165,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// When false, a single tap does not clear an active selection; the host
     /// decides what a tap means while selecting (e.g. extend to the tap).
     public var tapClearsSelection: Bool = true
+
+    /// Builds the selection edit menu (iOS 16+) in place of the default
+    /// Copy / Select / Select All / Paste. `suggested` is what UIKit proposes
+    /// for the context; a host that owns copy and paste supplies its own
+    /// actions here and puts its extras (send, quote, open) behind them.
+    public var editMenuBuilder: ((_ suggested: [UIMenuElement]) -> UIMenu?)?
+
+    /// Shows the edit menu over the current selection. Hosts call this after
+    /// changing the selection themselves (select line / block / all) and
+    /// when a scroll settles, so the menu follows the range.
+    public func presentSelectionMenu() {
+        guard selection.active else { return }
+        showContextMenu(forRegion: makeContextMenuRegionForSelection(), pos: selection.end)
+    }
+
+    /// Hides the edit menu without touching the selection, e.g. while the
+    /// view scrolls; `presentSelectionMenu()` brings it back.
+    public func dismissSelectionMenu() {
+        hideContextMenu()
+    }
     /// Called on the main thread whenever the selection starts, changes
     /// range, or ends.
     public var onSelectionChanged: (() -> Void)?
@@ -681,8 +701,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
          if gestureRecognizer.state == .ended || gestureRecognizer.state == .cancelled || gestureRecognizer.state == .failed {
+             let anchor = longPressMagnifierAnchor
              longPressMagnifierAnchor = nil
              hideSelectionMagnifier()
+             // The word was selected on touch-down; the menu waits for the
+             // release so it never sits under the finger or the loupe.
+             if gestureRecognizer.state == .ended, longPressSelectsWord, let anchor, selection.active {
+                 showContextMenu(forRegion: makeContextMenuRegionForSelection(), pos: anchor)
+             }
              return
          }
          if gestureRecognizer.state == .changed, let anchor = longPressMagnifierAnchor {
@@ -1101,7 +1127,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// All coordinates remain in the scroll view's content space. Sample
     /// the moving boundary, not the finger: a grab can be 22pt off the knob.
     private func updateSelectionMagnifier(at touch: CGPoint, position: Position) {
-        guard showsSelectionMagnifier, selection.active, window != nil,
+        guard showsSelectionMagnifier, selection.active, let window,
               cellDimension.width > 0, cellDimension.height > 0 else {
             hideSelectionMagnifier()
             return
@@ -1110,10 +1136,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                            y: min(max(CGFloat(position.row) * cellDimension.height, bounds.minY),
                                   max(bounds.minY, bounds.maxY - cellDimension.height)),
                            width: 1, height: cellDimension.height)
+        // The loupe lives in the window, not in this scroll view: UIKit clips
+        // its sample to the hosting view, so a session begun here went blank
+        // whenever the finger reached the left or right edge of the terminal
+        // or slid off it onto a key bar.
+        let hostTouch = convert(touch, to: window)
+        let hostCaret = convert(caret, to: window)
         if selectionMagnifier == nil {
-            selectionMagnifier = makeSelectionMagnifier(CGPoint(x: caret.midX, y: caret.midY), self)
+            selectionMagnifier = makeSelectionMagnifier(CGPoint(x: hostCaret.midX, y: hostCaret.midY), window)
         }
-        selectionMagnifier?.move(touch, caret)
+        selectionMagnifier?.move(hostTouch, hostCaret)
     }
 
     @objc private func hideSelectionMagnifier() {
@@ -3084,6 +3116,9 @@ extension TerminalView: UIEditMenuInteractionDelegate {
         menuFor configuration: UIEditMenuConfiguration,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
+        if let editMenuBuilder {
+            return editMenuBuilder(suggestedActions)
+        }
         var actions: [UIAction] = []
         if selection?.active == true {
             actions.append(UIAction(title: "Copy") { [weak self] _ in
