@@ -386,3 +386,23 @@ public class ImageCell {
         self.image = image
     }
 }
+
+extension TinyAtom: Hashable {
+    public static func == (lhs: TinyAtom, rhs: TinyAtom) -> Bool { lhs.code == rhs.code }
+    public func hash(into hasher: inout Hasher) { hasher.combine(code) }
+}
+
+/// Two cells are equal when they render the same: same rune, width,
+/// payload and attributes. The alignment padding is left out.
+extension CharData: Hashable {
+    public static func == (lhs: CharData, rhs: CharData) -> Bool {
+        lhs.code == rhs.code && lhs.width == rhs.width && lhs.payload == rhs.payload && lhs.attribute == rhs.attribute
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(code)
+        hasher.combine(width)
+        hasher.combine(payload)
+        hasher.combine(attribute)
+    }
+}

@@ -100,6 +100,31 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
     }
 
+    /// Hashes the first `cols` cells as a renderer reads them (clamped like
+    /// the subscript), so a line and a copy of it hash alike.
+    func hashCells (cols: Int, into hasher: inout Hasher) {
+        hasher.combine(cols)
+        for col in 0..<cols {
+            hasher.combine(self[col])
+        }
+    }
+
+    /// The first `cols` cells, read as the subscript reads them.
+    func cells (cols: Int) -> [CharData] {
+        (0..<cols).map { self[$0] }
+    }
+
+    /// Whether the first `cols` cells equal `cells`.
+    func cellsEqual (_ cells: [CharData], cols: Int) -> Bool {
+        guard cells.count == cols else {
+            return false
+        }
+        for col in 0..<cols where self[col] != cells[col] {
+            return false
+        }
+        return true
+    }
+
     /// Returns the number of character cells the element at this position occupies.
     public func getWidth (index: Int) -> Int {
         return Int (data [index].width)

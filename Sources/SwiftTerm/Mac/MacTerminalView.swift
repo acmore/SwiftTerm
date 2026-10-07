@@ -193,6 +193,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// https://developer.apple.com/forums/thread/663256?answerId=646653022#646653022
     public var disableFullRedrawOnAnyChanges = false
     var fontSet: FontSet
+    /// Rows shaped through CoreText, reused while their cells stay the same.
+    let renderedLines = RenderedLineCache()
 
     /// The font to use to render the terminal
     public var font: NSFont {

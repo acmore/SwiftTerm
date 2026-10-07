@@ -281,6 +281,7 @@ extension TerminalView {
     {
         self.attributes = [:]
         self.urlAttributes = [:]
+        renderedLines.removeAll()
         self.colors = Array(repeating: nil, count: 256)
         self.trueColors = [:]
     }
@@ -481,6 +482,7 @@ extension TerminalView {
     {
         urlAttributes = [:]
         attributes = [:]
+        renderedLines.removeAll()
         
         terminal.updateFullScreen ()
         queuePendingDisplay()
@@ -1326,6 +1328,32 @@ extension TerminalView {
     }
 
     
+    /// The row's segments shaped through CoreText, from the cache when the
+    /// same cells were shaped before. Rows under the selection or a link
+    /// highlight depend on more than their cells and are shaped every time,
+    /// as are rows holding Kitty placeholders (their decoding records the row).
+    func preparedLine (row: Int, line: BufferLine, cols: Int) -> (ViewLineInfo, [PreparedLineSegment])
+    {
+        let cacheable = selectedColumnsRange(row: row, cols: cols) == nil
+            && !(linkHighlightRange?.contains { $0.row == row } ?? false)
+        if cacheable, let entry = renderedLines.lookup(line: line, cols: cols) {
+            var info = entry.line
+            info.images = line.images
+            return (info, entry.prepared)
+        }
+        let info = buildAttributedString(row: row, line: line, cols: cols)
+        let prepared: [PreparedLineSegment] = info.segments.compactMap { segment in
+            guard segment.attributedString.length > 0 else { return nil }
+            let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
+            guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
+            return PreparedLineSegment(segment: segment, ctLine: ctLine, runs: runs)
+        }
+        if cacheable && info.kittyPlaceholders.isEmpty {
+            renderedLines.store(line: line, cols: cols, info: info, prepared: prepared)
+        }
+        return (info, prepared)
+    }
+
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
@@ -1364,6 +1392,13 @@ extension TerminalView {
             }
         }
         var placeholderImageCache: [UInt32: TTImage] = [:]
+
+        renderedLines.beginDraw(RenderedLineCache.Environment(cols: displayBuffer.cols,
+                                                              customBlockGlyphs: customBlockGlyphs,
+                                                              useBrightColors: useBrightColors,
+                                                              linkHighlightMode: linkHighlightMode,
+                                                              commandActive: commandActive))
+        defer { renderedLines.endDraw(capacity: 4 * max(displayBuffer.rows, 1)) }
 
         for row in firstRow...lastRow {
             if row < 0 {
@@ -1426,7 +1461,7 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
-            let lineInfo = buildAttributedString(row: row, line: line, cols: displayBuffer.cols)
+            let (lineInfo, preparedSegments) = preparedLine(row: row, line: line, cols: displayBuffer.cols)
             let rowBase = lineOrigin.y + cellDimension.height
             var underTextImages: [AppleImage] = []
             var overTextKittyImages: [AppleImage] = []
@@ -1457,15 +1492,6 @@ extension TerminalView {
                 underTextImages.sort(by: sortKitty)
                 overTextKittyImages.sort(by: sortKitty)
             }
-
-            // Pre-create CTLines and runs once per row to avoid duplicate creation
-            let preparedSegments: [(segment: ViewLineSegment, ctLine: CTLine, runs: [CTRun])] =
-                lineInfo.segments.compactMap { segment in
-                    guard segment.attributedString.length > 0 else { return nil }
-                    let ctLine = CTLineCreateWithAttributedString(segment.attributedString)
-                    guard let runs = CTLineGetGlyphRuns(ctLine) as? [CTRun] else { return nil }
-                    return (segment, ctLine, runs)
-                }
 
             // Background fill loop — uses cached CTLines
             context.saveGState()
