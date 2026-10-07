@@ -73,3 +73,31 @@ final class SynchronizedOutputTests {
         #expect(terminal.displayCursorHidden, "a frame that ends hidden hides the cursor once it is released")
     }
 }
+
+final class SynchronizedOutputSnapshotTests {
+    private class Delegate: TerminalDelegate {
+        func send(source: Terminal, data: ArraySlice<UInt8>) {}
+    }
+
+    /// The snapshot deep-copies the screen rows and shares the history: a
+    /// write during the frame must not show through, and history lines are
+    /// the same objects (no per-frame copy of the scrollback).
+    @Test func snapshotCopiesTheScreenAndSharesTheHistory() {
+        let terminal = Terminal(delegate: Delegate(), options: TerminalOptions(cols: 20, rows: 4, scrollback: 100))
+        for n in 1...30 { terminal.feed(text: "line \(n)\r\n") }
+        let live = terminal.buffer
+        terminal.feed(text: "\u{1B}[?2026h")
+        let shown = terminal.displayBuffer
+        #expect(shown !== live)
+        #expect(shown.lines.count == live.lines.count)
+        #expect(shown.lines[0] === live.lines[0], "history is shared")
+        let screenTop = live.yBase
+        #expect(shown.lines[screenTop] !== live.lines[screenTop], "screen rows are copied")
+        let before = shown.translateBufferLineToString(lineIndex: screenTop, trimRight: true)
+        terminal.feed(text: "\u{1B}[1;1Hchanged")
+        #expect(shown.translateBufferLineToString(lineIndex: screenTop, trimRight: true) == before, "a write during the frame does not show")
+        terminal.feed(text: "\u{1B}[?2026l")
+        #expect(terminal.displayBuffer === live)
+        #expect(live.translateBufferLineToString(lineIndex: screenTop, trimRight: true).hasPrefix("changed"))
+    }
+}
