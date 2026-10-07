@@ -5674,19 +5674,14 @@ open class Terminal {
         copy.savedCharset = source.savedCharset
         copy.scrollback = source.scrollback
 
-        // Only the lines the program can write during the frame are copied:
-        // the screen (yBase ..< yBase + rows) and, when the scrollback is
-        // full, the oldest lines a scroll may recycle into new screen rows.
-        // Everything else in the history is never written in place again,
-        // so the snapshot shares those line objects. Deep-copying thousands
-        // of scrollback lines on every `CSI ? 2026 h` was the single largest
-        // CPU cost of a repainting TUI (Sigmux #202).
+        // Screen rows may be edited in place. History can be shared: the
+        // ring detaches a shared row before recycling it, even if a frame
+        // fills the ring or scrolls more than a screen's worth of output.
         let total = source.lines.count
         let screen = source.yBase ..< min(total, source.yBase + source.rows)
-        let recyclable = 0 ..< (source.lines.isFull ? min(total, source.rows) : 0)
         for idx in 0..<total {
             let line = source.lines[idx]
-            copy.lines.push(screen.contains(idx) || recyclable.contains(idx) ? BufferLine(from: line) : line)
+            copy.lines.push(screen.contains(idx) ? BufferLine(from: line) : line)
         }
         return copy
     }

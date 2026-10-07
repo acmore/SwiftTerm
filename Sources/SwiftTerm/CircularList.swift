@@ -341,6 +341,12 @@ internal class CircularBufferLineList {
         startIndex += 1
         startIndex = startIndex % maxLength
         let hadImages = array[index]?.images != nil
+        // A synchronized-output snapshot may still own this history row.
+        // Detach at the actual recycle, not based on how full the ring was
+        // when the snapshot began or how many rows the frame might scroll.
+        if !isKnownUniquelyReferenced(&array[index]), let line = array[index] {
+            array[index] = BufferLine(from: line)
+        }
         array[index]?.clear(with: clearAttribute)
         onLineRecycled?(hadImages)
         //array [index] = makeEmpty! (-1)
