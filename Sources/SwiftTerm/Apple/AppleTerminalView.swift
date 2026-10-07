@@ -358,6 +358,36 @@ extension TerminalView {
     {
         return terminal
     }
+
+    /// Shows another `Terminal` in this view: the previous one keeps its
+    /// state and stops driving the view, the new one is resized to the
+    /// view's grid, drives it from now on, and the whole screen is redrawn.
+    /// A host that keeps one `Terminal` per tmux pane switches panes with
+    /// this instead of replaying their contents. Returns the terminal that
+    /// was shown before.
+    @discardableResult
+    public func adopt (terminal newTerminal: Terminal) -> Terminal
+    {
+        let previous: Terminal = terminal
+        guard newTerminal !== previous else { return previous }
+        previous.tdel = nil
+        newTerminal.tdel = self
+        newTerminal.backgroundColor = previous.backgroundColor
+        newTerminal.foregroundColor = previous.foregroundColor
+        terminal = newTerminal
+        selection = SelectionService (terminal: newTerminal)
+        search = SearchService (terminal: newTerminal)
+        resetCaches ()
+        if newTerminal.cols != previous.cols || newTerminal.rows != previous.rows {
+            newTerminal.resize (cols: previous.cols, rows: previous.rows)
+            sizeChanged (source: newTerminal)
+        }
+        newTerminal.updateFullScreen ()
+        updateScroller ()
+        updateCaretView ()
+        queuePendingDisplay ()
+        return previous
+    }
     
     /// This function computes the new columns and rows for the terminal when a pixel-size changes
     /// Returns true if this changed the number of columns/rows, false otherwise
