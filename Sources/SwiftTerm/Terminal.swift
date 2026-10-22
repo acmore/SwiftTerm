@@ -1830,7 +1830,10 @@ open class Terminal {
             }
             hyperLinkTracking = nil
         } else {
-            hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .ascii) ?? "")
+            // The payload is UTF-8: emitters write IRIs and, autolinking
+            // prose, sometimes sweep in punctuation like a fullwidth "）".
+            // Decoding it as ASCII dropped such a link altogether.
+            hyperLinkTracking = (start: Position(col: buffer.x, row: buffer.y+buffer.yBase), payload: String (bytes:data, encoding: .utf8) ?? "")
         }
     }
     

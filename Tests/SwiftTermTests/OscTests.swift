@@ -248,6 +248,18 @@ final class SwiftTermOsc {
         // Should not crash, ID helps group multi-line hyperlinks
     }
 
+    /// A target with non-ASCII bytes (an IRI path, or punctuation an
+    /// autolinker swept in) is still a link.
+    @Test func testOscHyperlinkWithNonASCIITarget() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{1b}]8;id=a;https://example.com/a）\u{1b}\\link\u{1b}]8;;\u{1b}\\ ")
+        t.feed(text: "\u{1b}]8;;https://zh.wikipedia.org/wiki/中文\u{07}wiki\u{1b}]8;;\u{07}")
+        #expect(t.link(at: .screen(Position(col: 1, row: 0)), mode: .explicitOnly) == "https://example.com/a）")
+        #expect(t.link(at: .screen(Position(col: 6, row: 0)), mode: .explicitOnly) == "https://zh.wikipedia.org/wiki/中文")
+        #expect(t.link(at: .screen(Position(col: 4, row: 0)), mode: .explicitOnly) == nil)
+    }
+
     /// Test OSC 52 (clipboard) query
     /// From Ghostty: "clipboard_contents"
     @Test func testOscClipboardQuery() {
