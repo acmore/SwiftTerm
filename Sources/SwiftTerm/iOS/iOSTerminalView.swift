@@ -692,12 +692,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
                     
     func makeContextMenuRegionForSelection () -> CGRect {
-        let width = selection.isMultiLine ? frame.width : CGFloat(selection.end.col-selection.start.col)*cellDimension.width
-        
-        return CGRect (x: CGFloat (selection.start.col)*cellDimension.width,
-                       y: CGFloat (selection.start.row)*cellDimension.height,
+        // A handle dragged backwards leaves `start` after `end`.
+        let (first, last) = Position.compare(selection.start, selection.end) == .after
+            ? (selection.end, selection.start) : (selection.start, selection.end)
+        let width = first.row != last.row ? frame.width : CGFloat(max(1, last.col-first.col))*cellDimension.width
+        let x = first.row != last.row ? 0 : CGFloat (first.col)*cellDimension.width
+        return CGRect (x: x,
+                       y: CGFloat (first.row)*cellDimension.height,
                        width: width,
-                       height: CGFloat (selection.end.row-selection.start.row+1)*cellDimension.height)
+                       height: CGFloat (last.row-first.row+1)*cellDimension.height)
     }
     
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
@@ -3187,6 +3190,16 @@ extension TerminalView: UIEditMenuInteractionDelegate {
             self?.paste(nil)
         })
         return UIMenu(children: actions)
+    }
+
+    /// The menu stands beside the whole selection rather than pointing at
+    /// its top edge, where UIKit may put it over the rows below.
+    public func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+    ) -> CGRect {
+        let region = lastLongSelectRegion.intersection(bounds)
+        return region.isNull || region.isEmpty ? .null : region
     }
 }
 
